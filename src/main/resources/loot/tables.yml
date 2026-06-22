@@ -1,0 +1,278 @@
+pools:
+  weapons:
+    easy:
+      - material: WOODEN_SWORD
+        amount: 1
+      - material: STONE_SWORD
+        amount: 1
+      - material: STONE_AXE
+        amount: 1
+      - material: GOLDEN_SWORD
+        amount: 1
+      - material: BOW
+        amount: 1
+      - material: ARROW
+        amount: 24
+      - material: SNOWBALL
+        amount: 8
+      - material: FISHING_ROD
+        amount: 1
+    normal:
+      - material: IRON_SWORD
+        amount: 1
+        enchantments:
+          SHARPNESS: 1
+      - material: IRON_AXE
+        amount: 1
+      - material: BOW
+        amount: 1
+      - material: CROSSBOW
+        amount: 1
+        enchantments:
+          QUICK_CHARGE: 1
+      - material: ARROW
+        amount: 32
+      - material: SPECTRAL_ARROW
+        amount: 4
+    hard:
+      - material: DIAMOND_SWORD
+        amount: 1
+        enchantments:
+          SHARPNESS: 2
+      - material: DIAMOND_AXE
+        amount: 1
+      - material: BOW
+        amount: 1
+        enchantments:
+          POWER: 2
+          PUNCH: 1
+      - material: TRIDENT
+        amount: 1
+        enchantments:
+          LOYALTY: 2
+      - material: ARROW
+        amount: 48
+      - material: SPECTRAL_ARROW
+        amount: 8
+    extreme:
+      - material: NETHERITE_SWORD
+        amount: 1
+        enchantments:
+          SHARPNESS: 3
+      - material: DIAMOND_AXE
+        amount: 1
+        enchantments:
+          SHARPNESS: 3
+      - material: BOW
+        amount: 1
+        enchantments:
+          POWER: 3
+          FLAME: 1
+          INFINITY: 1
+      - material: ARROW
+        amount: 1
+      - material: CROSSBOW
+        amount: 1
+        enchantments:
+          QUICK_CHARGE: 2
+          MULTISHOT: 1
+
+  armor:
+    easy:
+      - material: LEATHER_HELMET
+        amount: 1
+      - material: LEATHER_CHESTPLATE
+        amount: 1
+      - material: CHAINMAIL_HELMET
+        amount: 1
+      - material: CHAINMAIL_CHESTPLATE
+        amount: 1
+      - material: CHAINMAIL_LEGGINGS
+        amount: 1
+      - material: CHAINMAIL_BOOTS
+        amount: 1
+    normal:
+      - material: IRON_HELMET
+        amount: 1
+      - material: IRON_CHESTPLATE
+        amount: 1
+        enchantments:
+          PROTECTION: 1
+      - material: IRON_LEGGINGS
+        amount: 1
+      - material: IRON_BOOTS
+        amount: 1
+      - material: SHIELD
+        amount: 1
+    hard:
+      - material: DIAMOND_HELMET
+        amount: 1
+        enchantments:
+          PROTECTION: 1
+      - material: DIAMOND_CHESTPLATE
+        amount: 1
+        enchantments:
+          PROTECTION: 1
+      - material: DIAMOND_LEGGINGS
+        amount: 1
+      - material: DIAMOND_BOOTS
+        amount: 1
+      - material: SHIELD
+        amount: 1
+    extreme:
+      - material: DIAMOND_HELMET
+        amount: 1
+        enchantments:
+          PROTECTION: 2
+      - material: DIAMOND_CHESTPLATE
+        amount: 1
+        enchantments:
+          PROTECTION: 2
+      - material: DIAMOND_LEGGINGS
+        amount: 1
+        enchantments:
+          PROTECTION: 2
+      - material: DIAMOND_BOOTS
+        amount: 1
+        enchantments:
+          PROTECTION: 2
+      - material: NETHERITE_HELMET
+        amount: 1
+      - material: NETHERITE_CHESTPLATE
+        amount: 1
+      - material: SHIELD
+        amount: 1
+        enchantments:
+          UNBREAKING: 2
+
+  potions:
+    easy:
+      - material: POTION
+        amount: 1
+        potion: HEALING
+      - material: POTION
+        amount: 1
+        potion: SWIFTNESS
+      - material: SPLASH_POTION
+        amount: 1
+        potion: HEALING
+    normal:
+      - material: POTION
+        amount: 1
+        potion: STRONG_HEALING
+      - material: POTION
+        amount: 1
+        potion: STRENGTH
+      - material: POTION
+        amount: 1
+        potion: SWIFTNESS
+      - material: SPLASH_POTION
+        amount: 1
+        potion: HEALING
+    hard:
+      - material: POTION
+        amount: 1
+        potion: STRONG_HEALING
+      - material: POTION
+        amount: 1
+        potion: STRONG_HEALING
+      - material: POTION
+        amount: 1
+        potion: STRONG_STRENGTH
+      - material: POTION
+        amount: 1
+        potion: FIRE_RESISTANCE
+      - material: SPLASH_POTION
+        amount: 1
+        potion: STRONG_HEALING
+      - material: POTION
+        amount: 1
+        potion: REGENERATION
+    extreme:
+      - material: POTION
+        amount: 1
+        potion: STRONG_HEALING
+      - material: POTION
+        amount: 1
+        potion: STRONG_STRENGTH
+      - material: SPLASH_POTION
+        amount: 2
+        potion: STRONG_HEALING
+      - material: POTION
+        amount: 1
+        potion: LONG_FIRE_RESISTANCE
+      - material: POTION
+        amount: 1
+        potion: REGENERATION
+      - material: POTION
+        amount: 1
+        potion: STRONG_SWIFTNESS
+
+  utility:
+    easy:
+      - material: COOKED_BEEF
+        amount: 6
+      - material: ENDER_PEARL
+        amount: 1
+      - material: COBWEB
+        amount: 4
+    normal:
+      - material: GOLDEN_APPLE
+        amount: 1
+      - material: ENDER_PEARL
+        amount: 2
+      - material: COBWEB
+        amount: 6
+      - material: WATER_BUCKET
+        amount: 1
+      - material: FLINT_AND_STEEL
+        amount: 1
+    hard:
+      - material: GOLDEN_APPLE
+        amount: 2
+      - material: ENDER_PEARL
+        amount: 2
+      - material: TNT
+        amount: 2
+      - material: LAVA_BUCKET
+        amount: 1
+      - material: OBSIDIAN
+        amount: 4
+    extreme:
+      - material: ENCHANTED_GOLDEN_APPLE
+        amount: 1
+      - material: ENDER_PEARL
+        amount: 3
+      - material: TNT
+        amount: 4
+      - material: OBSIDIAN
+        amount: 8
+      - material: GOLDEN_APPLE
+        amount: 2
+
+  custom:
+    easy:
+      - customId: regen_talisman
+      - customId: berserker_totem
+      - customId: jump_boots
+    normal:
+      - customId: speed_charm
+      - customId: blink_pearl
+      - customId: loot_magnet
+      - customId: spike_mail
+      - customId: titan_heart
+      - customId: egg_machine_gun
+    hard:
+      - customId: vampire_blade
+      - customId: frost_prism
+      - customId: storm_caller
+      - customId: ghast_wand
+      - customId: seismic_gauntlet
+      - customId: red_shell
+    extreme:
+      - customId: void_orb
+      - customId: phantom_cloak
+      - customId: vampire_blade
+      - customId: storm_caller
+      - customId: titan_heart
+      - customId: seismic_gauntlet

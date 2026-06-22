@@ -1,0 +1,143 @@
+id: volcano
+displayName: "Volcano"
+difficulty: HARD
+description: "A lava caldera awakens — the volcano grows and erupts as the match goes on."
+minPlayers: 1
+maxPlayers: 24
+gracePeriodSeconds: 30
+maxMatchSeconds: 1200
+lootTier: hard
+lootBoxDensity: high
+initialTerrain: volcano
+treePlacement:
+  enabled: true
+  cellSize: 5
+  clusterThreshold: 0.04
+  fullDensityCluster: 0.30
+  minDensityChance: 0.30
+  maxDensityChance: 0.90
+  infertileSoilChanceScale: 0.30
+  minHeight: 4
+  maxHeight: 8
+  excludeCenterRadius: 10
+  species:
+    - oak
+    - spruce
+    - birch
+terrainPhases:
+  - type: FOREST
+    durationSeconds: 60
+  - type: VOLCANO_ERUPTION
+    durationSeconds: 0
+    intensityRampMatchRatio: 0.85
+    baseRadius: 8
+    # 0 = grow to arena edge by end of match (maxMatchSeconds)
+    maxConeBaseRadius: 0
+    # Scales how much of the available base growth is used (1.0 = full arena edge)
+    coneBaseGrowthScale: 0.6
+    maxConeLayers: 72
+    coneTipRadius: 1.5
+    heightGrowthPerSecond: 0.35
+    radiusGrowthPerSecond: 0.28
+    coneGrowthSpeedMultiplier: 1.6
+    buildBlocksPerTick: 24
+    # Hot netherrack ignites adjacent logs/leaves as the cone expands
+    hotNetherrackIgniteMargin: 8
+    hotNetherrackIgniteHeightAbovePeak: 24
+    hotNetherrackIgniteChecksPerTick: 500
+    # Arena fire spread (outside fire tornado): per-tick burn chance when adjacent to fire
+    arenaFireBurnChancePerTick: 0.10
+    arenaFireBurnChecksPerTick: 500
+    # Remove fire that no longer touches wood/leaves or hot rock after trees burn away
+    arenaFireDecayChancePerTick: 0.20
+    arenaFireDecayChecksPerTick: 500
+    lavaStartDelaySeconds: 0
+    # Lava placed on the inner cone face per tick so caldera lava runs down the volcano
+    lavaConeSpillPerTick: 8
+    # Trenches erupt from the volcano base and carve outward across the arena
+    lavaTrenchMax: 10
+    lavaTrenchSpawnOffsetMin: 1
+    lavaTrenchSpawnOffsetMax: 5
+    lavaTrenchCarvePerTick: 3
+    lavaTrenchFillPerTick: 2
+    lavaTrenchDepth: 2
+    # How many carved cells the lava trails behind the digging front
+    lavaTrenchLavaLagCells: 8
+    # Underground tunnels dug beneath the volcano footprint fill with lava
+    undergroundDigLavaEnabled: 1
+    undergroundDigLavaFloodBudget: 48
+    # 0 = auto-scale active lava sources with match progress
+    maxActiveLavaSources: 0
+    tntSpeedMin: 0.4
+    tntSpeedMax: 1.8
+    tntUpMin: 0.6
+    tntUpMax: 2.0
+    tntDistancePerLayer: 0.04
+    tntMaxSpeed: 3.5
+    tntFuseMinTicks: 70
+    tntFuseMaxTicks: 160
+    maxHostileMobs: 6
+    mobSpawnMinIntensity: 0.35
+    mobSpawnChancePerTick: 0.05
+    mobSpawnRadiusMin: 10
+    mobSpawnRadiusMax: 35
+    maxGhasts: 4
+    ghastMinConeLayers: 8
+    ghastMinIntensity: 0.3
+    ghastSpawnChancePerTick: 0.04
+    ghastSpawnRadiusMin: 12
+    ghastSpawnRadiusMax: 40
+    ghastMinHeightAboveVent: 5
+    ghastMaxHeightAboveVent: 16
+    projectileIntervalMin: 4
+    projectileIntervalMax: 0.6
+    projectileMaxPerBurst: 4
+    # Tornados can start appearing this far into the match, then recur randomly
+    fireTornadoStartMatchRatio: 0.35
+    fireTornadoMaxActive: 2
+    fireTornadoMinIntervalSeconds: 45
+    fireTornadoSpawnChancePerTick: 0.025
+    fireTornadoRadiusMin: 6
+    fireTornadoRadiusMax: 12
+    fireTornadoHeight: 50
+    fireTornadoMoveSpeed: 0.42
+    fireTornadoPlayerFollowRadius: 75
+    fireTornadoDamage: 3.0
+    fireTornadoDamageIntervalTicks: 20
+    fireTornadoMaxBeyondGrowth: 20
+    fireTornadoLifetimeSeconds: 90
+    fireTornadoLightningMinIntervalMs: 500
+    fireTornadoLightningMaxIntervalMs: 3000
+    fireTornadoLightningDamage: 2.5
+    fireTornadoLightningRealStrikeThreshold: 0.6
+    # Per-tick chance (inside tornado only) to destroy a burning log/leaf block
+    fireTornadoBurnChancePerTick: 0.4
+    # Per-tick chance to vaporize any non-protected block above local ground level
+    fireTornadoBlockDestroyChancePerTick: 0.15
+    volcanoLightningMinIntensity: 0.2
+    volcanoLightningMinIntervalMs: 12000
+    volcanoLightningMaxIntervalMs: 35000
+    volcanoLightningRealStrikeThreshold: 0.65
+    volcanoGuardianEnabled: true
+    volcanoGuardianStartMatchRatio: 0.65
+    volcanoGuardianScale: 1.75
+    volcanoGuardianInvulnerable: 1
+    volcanoGuardianAltitudeAbovePeak: 15
+    volcanoGuardianPatrolRadiusMin: 28
+    volcanoGuardianPatrolRadiusMax: 52
+    volcanoGuardianPatrolSpeed: 0.28
+    volcanoGuardianMoveSpeed: 0.48
+    volcanoGuardianPlayerFollowRadius: 85
+    volcanoGuardianReturnToVolcanoRadius: 100
+    volcanoGuardianMinDistanceFromVent: 22
+    volcanoGuardianBreathDamage: 5.0
+    volcanoGuardianBreathRadius: 4.0
+    volcanoGuardianBreathIntervalSeconds: 6
+    volcanoGuardianSwoopDamage: 10.0
+    volcanoGuardianSwoopCooldownSeconds: 14
+    volcanoGuardianSwoopSpeedMultiplier: 1.85
+    volcanoGuardianContactDamage: 6.0
+    volcanoGuardianContactRadius: 5.0
+    volcanoGuardianContactIntervalTicks: 10
+    volcanoGuardianSuppressGhasts: 1
+    volcanoGuardianMaxGhastsAfterSpawn: 1

@@ -1,0 +1,232 @@
+items:
+  jump_boots:
+    displayName: "&bSky Striders"
+    material: LEATHER_BOOTS
+    lore:
+      - "&7Permanent Jump Boost II while worn."
+    type: PASSIVE_ARMOR
+    ability: JUMP_BOOST
+    params:
+      amplifier: 2
+      slot: BOOTS
+
+  titan_heart:
+    displayName: "&cTitan Heart"
+    material: NETHER_STAR
+    lore:
+      - "&7Grants &c+5 bonus hearts&7 while held."
+    type: PASSIVE_HELD
+    ability: EXTRA_HEALTH
+    params:
+      bonusHearts: 5
+
+  ghast_wand:
+    displayName: "&6Ghast Wand"
+    material: BLAZE_ROD
+    lore:
+      - "&7Right-click to launch a fireball."
+      - "&8Cooldown: 10s"
+    type: ACTIVE
+    ability: GHAST_BLAST
+    params:
+      cooldownSeconds: 10
+      maxUses: 5
+      yield: 1.5
+
+  void_orb:
+    displayName: "&5Void Orb"
+    material: ENDER_EYE
+    lore:
+      - "&7Right-click to summon a black hole."
+      - "&7Pulls nearby entities for 3 seconds."
+      - "&8Cooldown: 22s"
+    type: ACTIVE
+    ability: BLACK_HOLE
+    params:
+      cooldownSeconds: 22
+      maxUses: 3
+      radius: 8
+      durationTicks: 60
+      pullStrength: 0.4
+
+  speed_charm:
+    displayName: "&aSpeed Charm"
+    material: RABBIT_FOOT
+    lore:
+      - "&7Right-click for Speed II (5s)."
+      - "&8Cooldown: 15s"
+    type: ACTIVE
+    ability: SPEED_BURST
+    params:
+      cooldownSeconds: 15
+      maxUses: 8
+      durationSeconds: 5
+      amplifier: 2
+
+  regen_talisman:
+    displayName: "&dRegen Talisman"
+    material: EMERALD
+    lore:
+      - "&7Regeneration I while held in hand."
+    type: PASSIVE_HELD
+    ability: REGEN_AURA
+    params:
+      amplifier: 0
+
+  storm_caller:
+    displayName: "&eStorm Caller"
+    material: BLAZE_ROD
+    lore:
+      - "&7Right-click to call lightning"
+      - "&7at your target (30 block range)."
+      - "&8Cooldown: 15s"
+    type: ACTIVE
+    ability: LIGHTNING_STRIKE
+    params:
+      cooldownSeconds: 15
+      maxUses: 6
+      range: 30
+
+  blink_pearl:
+    displayName: "&3Blink Pearl"
+    material: ENDER_PEARL
+    lore:
+      - "&7Right-click to teleport 10 blocks"
+      - "&7forward instantly."
+      - "&8Cooldown: 10s"
+    type: ACTIVE
+    ability: BLINK
+    params:
+      cooldownSeconds: 10
+      maxUses: 8
+      distance: 10
+
+  seismic_gauntlet:
+    displayName: "&6Seismic Gauntlet"
+    material: IRON_INGOT
+    lore:
+      - "&7Right-click to unleash a shockwave."
+      - "&74 damage, knockback in 6 block radius."
+      - "&8Cooldown: 18s"
+    type: ACTIVE
+    ability: SHOCKWAVE
+    params:
+      cooldownSeconds: 18
+      maxUses: 4
+      radius: 6
+      knockback: 1.5
+      damage: 4.0
+
+  phantom_cloak:
+    displayName: "&8Phantom Cloak"
+    material: GRAY_DYE
+    lore:
+      - "&7Right-click for 8s invisibility."
+      - "&8Cooldown: 28s"
+    type: ACTIVE
+    ability: INVISIBILITY_BURST
+    params:
+      cooldownSeconds: 28
+      maxUses: 3
+      durationSeconds: 8
+
+  berserker_totem:
+    displayName: "&cBerserker Totem"
+    material: REDSTONE
+    lore:
+      - "&7Strength I while held."
+    type: PASSIVE_HELD
+    ability: STRENGTH_AURA
+    params:
+      amplifier: 1
+
+  lava_walkers:
+    displayName: "&6Lava Walkers"
+    material: GOLDEN_BOOTS
+    lore:
+      - "&7Fire Resistance while worn."
+    type: PASSIVE_ARMOR
+    ability: FIRE_RESISTANCE
+    params: {}
+
+  frost_prism:
+    displayName: "&bFrost Prism"
+    material: BLUE_ICE
+    lore:
+      - "&7Right-click to freeze an area."
+      - "&7Slowness III for 5 seconds."
+      - "&8Cooldown: 16s"
+    type: ACTIVE
+    ability: ICE_SNARE
+    params:
+      cooldownSeconds: 16
+      maxUses: 5
+      range: 20
+      radius: 5
+      durationSeconds: 5
+      slownessAmplifier: 3
+
+  vampire_blade:
+    displayName: "&4Vampire Blade"
+    material: DIAMOND_SWORD
+    lore:
+      - "&7Steals &c30%&7 of damage dealt as health."
+    type: ON_ATTACK
+    ability: LIFE_STEAL
+    params:
+      healPercent: 30
+
+  spike_mail:
+    displayName: "&7Spike Mail"
+    material: CHAINMAIL_CHESTPLATE
+    lore:
+      - "&7Reflects &c35%&7 of damage back to attackers."
+    type: PASSIVE_ARMOR
+    ability: THORNS_AURA
+    params:
+      reflectPercent: 35
+
+  loot_magnet:
+    displayName: "&dLoot Magnet"
+    material: LODESTONE
+    lore:
+      - "&7Right-click to pull nearby dropped items."
+      - "&8Cooldown: 8s"
+    type: ACTIVE
+    ability: ITEM_MAGNET
+    params:
+      cooldownSeconds: 8
+      maxUses: 10
+      radius: 10
+      pullStrength: 0.8
+
+  red_shell:
+    displayName: "&cRed Shell"
+    material: TURTLE_SCUTE
+    lore:
+      - "&7Right-click to throw a homing shell."
+      - "&7Stuns the nearest enemy player on hit."
+      - "&8Cooldown: 8s"
+    type: ACTIVE
+    ability: RED_SHELL
+    params:
+      cooldownSeconds: 8
+      maxUses: 3
+      homingRange: 40
+      stunDurationSeconds: 3
+      speed: 1.2
+
+  egg_machine_gun:
+    displayName: "&eEgg Machine Gun"
+    material: EGG
+    lore:
+      - "&7Right-click to toggle rapid egg fire."
+      - "&7Fires 10 eggs per second while active."
+      - "&8Cooldown: 3s"
+    type: ACTIVE
+    ability: EGG_MACHINE_GUN
+    params:
+      cooldownSeconds: 3
+      maxUses: 100
+      fireRate: 10
+      damage: 1.0

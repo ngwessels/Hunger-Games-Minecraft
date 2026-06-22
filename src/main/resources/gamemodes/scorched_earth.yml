@@ -1,0 +1,40 @@
+id: scorched_earth
+displayName: "Scorched Earth"
+difficulty: EXTREME
+description: "Rapid terrain cycling — nether, ocean, and storms."
+minPlayers: 1
+maxPlayers: 24
+gracePeriodSeconds: 20
+maxMatchSeconds: 900
+lootTier: extreme
+lootBoxDensity: high
+initialTerrain: barren
+treePlacement:
+  enabled: true
+  cellSize: 8
+  clusterThreshold: 0.12
+  minHeight: 3
+  maxHeight: 5
+  maxDensityChance: 0.45
+  species:
+    - oak
+    - spruce
+terrainPhases:
+  - type: FOREST
+    durationMatchRatio: 0.15
+  - type: NETHER_TRANSFORM
+    durationMatchRatio: 0.25
+    transformSpeed: fast
+  - type: OCEAN_RISE
+    durationMatchRatio: 0.25
+    riseBlocksPerTick: 2
+    startLevel: 16
+    blocksPerTick: 4000
+  - type: STORM
+    durationSeconds: 0
+    lightningMinIntervalMs: 6000
+    lightningMaxIntervalMs: 18000
+    lightningMinIntensity: 0.1
+    lightningRealStrikeThreshold: 0.5
+    stormFireBurnChancePerTick: 0.12
+    stormFireBurnChecksPerTick: 500

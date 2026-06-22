@@ -1,0 +1,67 @@
+tiers:
+  easy:
+    rolls: 2
+    pools:
+      weapons: 35
+      armor: 30
+      potions: 25
+      utility: 5
+      custom: 5
+  normal:
+    rolls: 2
+    pools:
+      weapons: 40
+      armor: 30
+      potions: 20
+      utility: 5
+      custom: 5
+  hard:
+    rolls: 3
+    pools:
+      weapons: 42
+      armor: 28
+      potions: 20
+      utility: 5
+      custom: 5
+  extreme:
+    rolls: 3
+    pools:
+      weapons: 38
+      armor: 25
+      potions: 22
+      utility: 5
+      custom: 10
+
+cornucopia:
+  easy:
+    rolls: 5
+    pools:
+      weapons: 35
+      armor: 30
+      potions: 25
+      utility: 5
+      custom: 5
+  normal:
+    rolls: 7
+    pools:
+      weapons: 38
+      armor: 30
+      potions: 22
+      utility: 5
+      custom: 5
+  hard:
+    rolls: 9
+    pools:
+      weapons: 40
+      armor: 28
+      potions: 22
+      utility: 5
+      custom: 5
+  extreme:
+    rolls: 11
+    pools:
+      weapons: 35
+      armor: 28
+      potions: 22
+      utility: 5
+      custom: 10

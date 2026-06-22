@@ -1,0 +1,23 @@
+name: HungerGames
+version: 1.0.0
+main: com.hungergames.HungerGamesPlugin
+api-version: '1.21'
+description: Hunger Games arena plugin with dynamic terrain and custom loot
+authors: [HungerGames]
+
+commands:
+  hg:
+    description: Hunger Games main command
+    usage: /hg <subcommand>
+    aliases: [hungergames]
+
+permissions:
+  hungergames.admin:
+    description: Admin commands for arena and game management
+    default: op
+  hungergames.play:
+    description: Join Hunger Games matches
+    default: true
+  hungergames.spectate:
+    description: Spectate matches
+    default: true

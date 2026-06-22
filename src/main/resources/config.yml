@@ -1,0 +1,61 @@
+generation:
+  blocks-per-tick: 4000
+  wall-thickness: 4
+  base-terrain-y: 20
+  default-wall-height: 21
+
+game:
+  default-countdown: 10
+  default-grace-period: 30
+  # Invulnerability + glowing outline after death respawn (seconds).
+  respawn-grace-seconds: 5
+  min-players-default: 1
+  ending-delay-seconds: 10
+  end-on-last-survivor: true
+  # First player to reach this many player kills wins. Set to 0 to disable.
+  kills-to-win: 10
+  # After this many deaths a player is out for the match (spectator or /hg leave). Set to 0 for unlimited respawns.
+  deaths-to-spectate: 10
+  # Fallback match time limit (seconds) when a gamemode omits maxMatchSeconds. 0 = no limit.
+  default-max-match-seconds: 0
+  # Multiplier for how quickly lava spreads during matches (1.5 = 50% faster).
+  lava-flow-speed-multiplier: 1.5
+  # Multiplier for in-match health regeneration (2.0 = 100% faster / double speed).
+  match-heal-multiplier: 2.0
+  # Border shrink is off unless a gamemode sets borderShrink: true (or borderShrink.enabled: true)
+  border-shrink:
+    duration-seconds: 90
+    shrink-per-tick: 0.5
+
+loot:
+  strip-custom-on-match-end: true
+  custom-item-global-weight: 5
+  boxes:
+    block-type: CHEST
+    min-distance-from-center: 0
+    min-spacing: 8
+    density-per-100-radius: 6
+  density-multipliers:
+    low: 0.5
+    medium: 1.0
+    high: 1.75
+
+powerups:
+  enabled: true
+  min-interval-seconds: 9
+  max-interval-seconds: 18
+  despawn-seconds: 90
+  pickup-radius: 2.0
+  drop-height-blocks: 25
+  min-effect-duration-seconds: 20
+  players-per-spawn: 1
+  min-spawns-per-wave: 2
+  max-spawns-per-wave: 10
+  players-per-active: 2
+  max-active-cap: 20
+  ultimate-spawn-chance: 0.15
+  beacon-beam-height-blocks: 80
+  beacon-beam-interval-ticks: 4
+
+messages:
+  prefix: "&6[HG] &r"

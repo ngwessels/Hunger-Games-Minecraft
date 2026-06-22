@@ -1,0 +1,22 @@
+package com.hungergames.item;
+
+public enum AbilityType {
+    JUMP_BOOST,
+    EXTRA_HEALTH,
+    GHAST_BLAST,
+    BLACK_HOLE,
+    SPEED_BURST,
+    REGEN_AURA,
+    LIGHTNING_STRIKE,
+    BLINK,
+    SHOCKWAVE,
+    INVISIBILITY_BURST,
+    STRENGTH_AURA,
+    FIRE_RESISTANCE,
+    ICE_SNARE,
+    LIFE_STEAL,
+    THORNS_AURA,
+    ITEM_MAGNET,
+    RED_SHELL,
+    EGG_MACHINE_GUN
+}

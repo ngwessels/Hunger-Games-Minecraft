@@ -1,0 +1,26 @@
+id: peaceful_forest
+displayName: "Peaceful Forest"
+difficulty: EASY
+description: "A calm forest arena — no terrain hazards."
+minPlayers: 1
+maxPlayers: 24
+gracePeriodSeconds: 45
+maxMatchSeconds: 1800
+lootTier: easy
+lootBoxDensity: low
+initialTerrain: forest
+treePlacement:
+  enabled: true
+  cellSize: 4
+  clusterThreshold: 0.02
+  maxDensityChance: 0.95
+  minHeight: 5
+  maxHeight: 10
+  excludeCenterRadius: 8
+  species:
+    - oak
+    - spruce
+    - birch
+terrainPhases:
+  - type: FOREST
+    durationMatchRatio: 1.0

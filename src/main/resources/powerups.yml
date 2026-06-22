@@ -1,0 +1,89 @@
+powerups:
+  speed_boost:
+    displayName: "&aSpeed Boost"
+    material: SUGAR
+    particle: HAPPY_VILLAGER
+    weight: 10
+    effect: POTION
+    params:
+      potionType: SPEED
+      durationSeconds: 20
+      amplifier: 2
+
+  strength_surge:
+    displayName: "&cStrength Surge"
+    material: BLAZE_POWDER
+    particle: FLAME
+    weight: 8
+    effect: POTION
+    params:
+      potionType: STRENGTH
+      durationSeconds: 20
+      amplifier: 2
+
+  regen_burst:
+    displayName: "&dRegen Burst"
+    material: GLISTERING_MELON_SLICE
+    particle: HEART
+    weight: 8
+    effect: POTION
+    params:
+      potionType: REGENERATION
+      durationSeconds: 25
+      amplifier: 1
+
+  absorption_shield:
+    displayName: "&6Absorption Shield"
+    material: GOLDEN_APPLE
+    particle: TOTEM_OF_UNDYING
+    weight: 6
+    effect: ABSORPTION
+    params:
+      hearts: 4
+      durationSeconds: 30
+
+  instant_heal:
+    displayName: "&cInstant Heal"
+    material: POTION
+    particle: HEART
+    weight: 7
+    effect: HEAL
+    params:
+      amount: 6
+
+  fire_resistance:
+    displayName: "&6Fire Resistance"
+    material: MAGMA_CREAM
+    particle: FLAME
+    weight: 6
+    effect: POTION
+    params:
+      potionType: FIRE_RESISTANCE
+      durationSeconds: 30
+      amplifier: 1
+
+  jump_boost:
+    displayName: "&bJump Boost"
+    material: RABBIT_FOOT
+    particle: CLOUD
+    weight: 8
+    effect: POTION
+    params:
+      potionType: JUMP_BOOST
+      durationSeconds: 20
+      amplifier: 2
+
+  volcano_ascendant:
+    displayName: "&4&lVolcano Ascendant"
+    material: DRAGON_HEAD
+    particle: DRAGON_BREATH
+    weight: 1
+    effect: GUARDIAN_CONTROL
+    spawnRule: GUARDIAN_ACTIVE
+    params:
+      durationSeconds: 60
+      playerHighlightRadius: 85
+      spawnRadiusMin: 12
+      spawnRadiusMax: 28
+      breathCooldownSeconds: 6
+      invulnerable: false

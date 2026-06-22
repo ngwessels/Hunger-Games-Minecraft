@@ -1,0 +1,34 @@
+id: standard
+displayName: "Standard Arena"
+difficulty: NORMAL
+description: "Mixed terrain that warps into the nether mid-match."
+minPlayers: 1
+maxPlayers: 24
+gracePeriodSeconds: 30
+maxMatchSeconds: 1080
+lootTier: normal
+lootBoxDensity: medium
+initialTerrain: mixed
+treePlacement:
+  enabled: true
+  cellSize: 7
+  clusterThreshold: 0.10
+  maxDensityChance: 0.55
+  excludeCenterRadius: 8
+  species:
+    - oak
+    - birch
+terrainPhases:
+  - type: FOREST
+    durationMatchRatio: 0.40
+  - type: NETHER_TRANSFORM
+    durationMatchRatio: 0.40
+    transformSpeed: medium
+  - type: STORM
+    durationMatchRatio: 0.20
+    lightningMinIntervalMs: 10000
+    lightningMaxIntervalMs: 28000
+    lightningMinIntensity: 0.15
+    lightningRealStrikeThreshold: 0.6
+    stormFireBurnChancePerTick: 0.08
+    stormFireBurnChecksPerTick: 400

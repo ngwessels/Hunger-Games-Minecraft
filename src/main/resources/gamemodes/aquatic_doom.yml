@@ -1,0 +1,38 @@
+id: aquatic_doom
+displayName: "Aquatic Doom"
+difficulty: HARD
+description: "The arena floods from the edges inward."
+minPlayers: 1
+maxPlayers: 24
+gracePeriodSeconds: 30
+maxMatchSeconds: 1200
+lootTier: hard
+lootBoxDensity: medium
+initialTerrain: forest
+treePlacement:
+  enabled: true
+  cellSize: 6
+  clusterThreshold: 0.06
+  species:
+    - birch
+    - birch
+    - oak
+terrainPhases:
+  - type: FOREST
+    durationMatchRatio: 0.15
+  - type: OCEAN_RISE
+    durationSeconds: 0
+    riseBlocksPerTick: 1
+    startLevel: 18
+    blocksPerTick: 4000
+    intensityRampMatchRatio: 0.85
+    maxHostileMobs: 5
+    mobSpawnMinIntensity: 0.2
+    mobSpawnChancePerTick: 0.04
+    mobSpawnRadiusMin: 8
+    mobSpawnRadiusMax: 30
+    mobTypesEarly:
+      - DROWNED
+    mobTypesLate:
+      - DROWNED
+      - GUARDIAN
