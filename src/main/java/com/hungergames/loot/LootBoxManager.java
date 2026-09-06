@@ -2,6 +2,7 @@ package com.hungergames.loot;
 
 import com.hungergames.HungerGamesPlugin;
 import com.hungergames.arena.Arena;
+import com.hungergames.arena.SettlementLayout;
 import com.hungergames.arena.VolcanoCaldera;
 import com.hungergames.game.Game;
 import com.hungergames.game.GameState;
@@ -20,10 +21,12 @@ import org.bukkit.block.Block;
 import org.bukkit.block.Container;
 import org.bukkit.block.TileState;
 import org.bukkit.entity.Player;
+import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.persistence.PersistentDataType;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Optional;
 import java.util.Random;
@@ -210,6 +213,39 @@ public class LootBoxManager {
         return fillCornucopiaChests(arena, tier);
     }
 
+    /**
+     * Fills settlement building chests recorded on the arena layout during
+     * generation. These are plain blocks (no LootBox registration), so
+     * break-protection and refill behavior are unchanged.
+     */
+    public int fillBuildingChests(Arena arena, String tier) {
+        World world = arena.getWorld();
+        if (world == null) {
+            return 0;
+        }
+        SettlementLayout layout = arena.getSettlementLayout();
+        List<SettlementLayout.ChestSite> sites = layout.getChestSites();
+        if (sites.isEmpty()) {
+            return 0;
+        }
+
+        int filled = 0;
+        for (SettlementLayout.ChestSite site : sites) {
+            Block block = world.getBlockAt(site.x(), site.y(), site.z());
+            if (block.getType() != Material.CHEST && block.getType() != Material.TRAPPED_CHEST) {
+                continue;
+            }
+            List<ItemStack> loot = lootTable.roll(tier, true);
+            if (fillContainerBlock(block, loot)) {
+                filled++;
+            }
+        }
+
+        plugin.getLogger().info("Filled " + filled + "/" + sites.size()
+                + " settlement chest(s) in arena " + arena.getName() + " (tier: " + tier + ").");
+        return filled;
+    }
+
     public boolean tryRefillEmptyCornucopiaChest(Player player, Block block) {
         if (isLootBox(block)) {
             return false;
@@ -304,7 +340,11 @@ public class LootBoxManager {
             return false;
         }
 
-        container.getInventory().clear();
+        // Write into the state's snapshot inventory: Container#update() writes this
+        // snapshot back over the block, so filling the live inventory first would be
+        // wiped by the update call below.
+        Inventory target = container.getSnapshotInventory();
+        target.clear();
         if (loot.isEmpty()) {
             plugin.getLogger().warning("Loot roll returned no items for chest at "
                     + block.getX() + ", " + block.getY() + ", " + block.getZ()
@@ -313,12 +353,21 @@ public class LootBoxManager {
             return false;
         }
 
+        int leftover = 0;
         for (ItemStack item : loot) {
-            if (item != null && !item.getType().isAir()) {
-                container.getInventory().addItem(item.clone());
+            if (item == null || item.getType().isAir()) {
+                continue;
+            }
+            HashMap<Integer, ItemStack> overflow = target.addItem(item.clone());
+            if (!overflow.isEmpty()) {
+                leftover += overflow.size();
             }
         }
         container.update(true, false);
+        if (leftover > 0) {
+            plugin.getLogger().warning("Chest at " + block.getX() + ", " + block.getY()
+                    + ", " + block.getZ() + " was full; " + leftover + " item stack(s) did not fit.");
+        }
         return true;
     }
 

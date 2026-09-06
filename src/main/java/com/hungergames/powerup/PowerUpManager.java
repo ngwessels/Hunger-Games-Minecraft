@@ -18,6 +18,10 @@ import org.bukkit.Material;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
 import org.bukkit.World;
+import org.bukkit.block.Block;
+import org.bukkit.block.BlockFace;
+import org.bukkit.block.BlockState;
+import org.bukkit.block.Container;
 import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
@@ -27,11 +31,12 @@ import org.bukkit.persistence.PersistentDataType;
 
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.Iterator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Random;
+import java.util.Set;
 import java.util.UUID;
 
 public class PowerUpManager {
@@ -39,6 +44,7 @@ public class PowerUpManager {
     private final HungerGamesPlugin plugin;
     private final Random random = new Random();
     private final Map<String, GamePowerUpState> stateByArena = new HashMap<>();
+    private final Map<Location, PowerUpInstance> instanceByBeaconBase = new HashMap<>();
     private PlayerGuardianSession activeGuardianPilot;
 
     public PowerUpManager(HungerGamesPlugin plugin) {
@@ -61,6 +67,8 @@ public class PowerUpManager {
                 });
 
         tickInstances(game, state);
+        sweepOrphanedBeacons();
+        sweepOrphanedMarkers(game);
         tickActionBars(game, state);
 
         state.secondsUntilNextSpawn--;
@@ -75,8 +83,13 @@ public class PowerUpManager {
         GamePowerUpState state = stateByArena.remove(arenaKey(game));
         if (state != null) {
             for (PowerUpInstance instance : new ArrayList<>(state.instances)) {
-                destroyInstance(game, instance, DestroyReason.CLEANUP, false);
+                removeBeacon(instance);
+                ArmorStand stand = resolveMarker(instance);
+                if (stand != null && !stand.isDead()) {
+                    stand.remove();
+                }
             }
+            state.instances.clear();
         }
         if (activeGuardianPilot != null && activeGuardianPilot.getPlayer() != null
                 && game.isParticipant(activeGuardianPilot.getPlayer().getUniqueId())) {
@@ -131,7 +144,7 @@ public class PowerUpManager {
             if (game == null) {
                 continue;
             }
-            for (PowerUpInstance instance : entry.getValue().instances) {
+            for (PowerUpInstance instance : new ArrayList<>(entry.getValue().instances)) {
                 if (entityId.equals(instance.getMarkerEntityId())) {
                     destroyInstance(game, instance, DestroyReason.TORNADO, true);
                     return;
@@ -244,10 +257,16 @@ public class PowerUpManager {
     private void configureMarker(ArmorStand stand, PowerUpDefinition def) {
         stand.setVisible(false);
         stand.setGravity(true);
-        stand.setGlowing(true);
         stand.setInvulnerable(true);
+        // Never persist: a crash/reload mid-game would otherwise leave untracked,
+        // invisible named stands behind in the world forever.
+        stand.setPersistent(false);
+        // Glow on an invisible entity renders as a bare floating outline box, and
+        // collision on a non-marker stand lets players bump into thin air - both
+        // read as glitches. Particles and the beacon beam already mark the drop.
+        stand.setSilent(true);
+        stand.setCollidable(false);
         stand.setMarker(false);
-        stand.setCollidable(true);
         stand.setCustomNameVisible(true);
         stand.setCustomName(ColorUtil.color(def.getDisplayName()));
 
@@ -277,40 +296,40 @@ public class PowerUpManager {
             return;
         }
 
-        Iterator<PowerUpInstance> iterator = state.instances.iterator();
-        while (iterator.hasNext()) {
-            PowerUpInstance instance = iterator.next();
+        for (PowerUpInstance instance : new ArrayList<>(state.instances)) {
+            if (!state.instances.contains(instance)) {
+                continue;
+            }
             ArmorStand stand = resolveMarker(instance);
             if (stand == null || stand.isDead()) {
-                iterator.remove();
+                removeBeacon(instance);
+                state.instances.remove(instance);
                 continue;
             }
 
             Optional<PowerUpDefinition> defOpt = plugin.getPowerUpRegistry().getDefinition(instance.getDefinitionId());
             if (defOpt.isEmpty()) {
                 stand.remove();
-                iterator.remove();
+                removeBeacon(instance);
+                state.instances.remove(instance);
                 continue;
             }
             PowerUpDefinition def = defOpt.get();
 
             if (instance.getState() == PowerUpState.FALLING) {
                 tickFalling(game, arena, state, instance, stand, def);
-                if (!state.instances.contains(instance)) {
-                    continue;
-                }
             } else {
                 tickLanded(game, instance, stand, def);
-                if (!state.instances.contains(instance)) {
-                    continue;
-                }
-                if (instance.getDespawnAtMillis() > 0
+                if (state.instances.contains(instance)
+                        && instance.getDespawnAtMillis() > 0
                         && System.currentTimeMillis() >= instance.getDespawnAtMillis()) {
                     destroyInstance(game, instance, DestroyReason.DESPAWN, true);
                 }
             }
 
-            spawnParticles(instance, stand, def);
+            if (state.instances.contains(instance)) {
+                spawnParticles(instance, stand, def);
+            }
         }
     }
 
@@ -318,12 +337,14 @@ public class PowerUpManager {
         World world = arena.getWorld();
         Location loc = stand.getLocation();
         if (!isInsideArena(arena, loc)) {
+            removeBeacon(instance);
             stand.remove();
             state.instances.remove(instance);
             return;
         }
 
         if (loc.getY() < world.getMinHeight() + 5) {
+            removeBeacon(instance);
             stand.remove();
             state.instances.remove(instance);
             return;
@@ -347,10 +368,192 @@ public class PowerUpManager {
         int despawnSeconds = plugin.getPluginConfig().getPowerUpDespawnSeconds();
         instance.setDespawnAtMillis(System.currentTimeMillis() + despawnSeconds * 1000L);
         instance.setSpawnLocation(stand.getLocation());
+        placeBeacon(instance, stand.getLocation());
 
         World world = stand.getWorld();
         if (world != null) {
             world.playSound(stand.getLocation(), Sound.ENTITY_GENERIC_SPLASH, 1f, 1.2f);
+        }
+    }
+
+    /**
+     * Builds a small temporary pedestal with a real beacon under the landed marker so
+     * the vanilla light beam renders for every player in the arena. The original
+     * terrain is snapshotted so it can be restored exactly when the power-up leaves
+     * the world.
+     */
+    private void placeBeacon(PowerUpInstance instance, Location landing) {
+        World world = landing.getWorld();
+        if (world == null || !plugin.getPluginConfig().isPowerUpBeaconBeamEnabled()) {
+            return;
+        }
+        // The marker's feet block is air; the beacon replaces the surface block under
+        // it so the item appears to sit directly on the beacon.
+        Block anchor = landing.getBlock().getRelative(BlockFace.DOWN);
+        if (anchor.getY() - 1 < world.getMinHeight() || isOtherBeaconAt(anchor)) {
+            return;
+        }
+        // Never swallow containers or another beacon - restoring those is risky.
+        if (anchor.getState() instanceof Container
+                || anchor.getType() == Material.BEACON
+                || plugin.getLootBoxManager().isLootBox(anchor)) {
+            return;
+        }
+        // A partial pyramid cannot power a beacon, so the whole footprint must be
+        // free of chests, loot boxes, and other containers before we commit.
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                Block pedestalBlock = anchor.getRelative(dx, -1, dz);
+                if (pedestalBlock.getState() instanceof Container
+                        || plugin.getLootBoxManager().isLootBox(pedestalBlock)
+                        || pedestalBlock.getType() == Material.BEACON) {
+                    return;
+                }
+            }
+        }
+
+        List<BlockState> originals = instance.getBeaconOriginals();
+        Material pedestalMaterial = plugin.getPluginConfig().getPowerUpBeaconPedestalMaterial();
+        // Tier-1 pyramid: a full 3x3 mineral layer one block below the beacon.
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                Block pedestalBlock = anchor.getRelative(dx, -1, dz);
+                originals.add(pedestalBlock.getState());
+                pedestalBlock.setType(pedestalMaterial, false);
+            }
+        }
+        originals.add(anchor.getState());
+        anchor.setType(Material.BEACON, false);
+
+        instance.setBeaconBase(anchor.getLocation());
+        instanceByBeaconBase.put(anchor.getLocation(), instance);
+        world.playSound(anchor.getLocation(), Sound.BLOCK_BEACON_ACTIVATE, 0.7f, 1.4f);
+    }
+
+    /** True when another live power-up's beacon structure overlaps this spot. */
+    private boolean isOtherBeaconAt(Block anchor) {
+        if (instanceByBeaconBase.isEmpty()) {
+            return false;
+        }
+        int ax = anchor.getX();
+        int ay = anchor.getY();
+        int az = anchor.getZ();
+        for (Location base : instanceByBeaconBase.keySet()) {
+            if (!anchor.getWorld().equals(base.getWorld())) {
+                continue;
+            }
+            boolean overlaps = Math.abs(ax - base.getBlockX()) <= 1
+                    && Math.abs(az - base.getBlockZ()) <= 1
+                    && Math.abs(ay - base.getBlockY()) <= 1;
+            if (overlaps) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isInstanceAlive(PowerUpInstance instance) {
+        ArmorStand stand = resolveMarker(instance);
+        return stand != null && !stand.isDead();
+    }
+
+    private void removeBeacon(PowerUpInstance instance) {
+        Location base = instance.getBeaconBase();
+        if (base == null) {
+            return;
+        }
+        World world = base.getWorld();
+        if (world != null && world.isChunkLoaded(base.getBlockX() >> 4, base.getBlockZ() >> 4)) {
+            world.playSound(base, Sound.BLOCK_BEACON_DEACTIVATE, 0.7f, 1.2f);
+        }
+        restoreBeaconTerrain(instance);
+    }
+
+    /** True when the block belongs to a live power-up's beacon structure. */
+    public boolean isProtectedBlock(Block block) {
+        Material pedestalMaterial = plugin.getPluginConfig().getPowerUpBeaconPedestalMaterial();
+        Material type = block.getType();
+        if (type != Material.BEACON && type != pedestalMaterial) {
+            return false;
+        }
+        for (Map.Entry<Location, PowerUpInstance> entry : instanceByBeaconBase.entrySet()) {
+            Location base = entry.getKey();
+            if (!block.getWorld().equals(base.getWorld())) {
+                continue;
+            }
+            if (Math.abs(block.getX() - base.getBlockX()) > 1
+                    || Math.abs(block.getZ() - base.getBlockZ()) > 1
+                    || Math.abs(block.getY() - base.getBlockY()) > 1) {
+                continue;
+            }
+            PowerUpInstance owner = entry.getValue();
+            if (isInstanceAlive(owner)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Safety net: if an instance ever leaves the map without its beacon being removed
+     * (external plugin kills the marker, world unload, etc.), clean up the leftover
+     * structure so no iron pedestal is left behind in the arena.
+     */
+    private void sweepOrphanedBeacons() {
+        if (instanceByBeaconBase.isEmpty()) {
+            return;
+        }
+        for (Map.Entry<Location, PowerUpInstance> entry : Map.copyOf(instanceByBeaconBase).entrySet()) {
+            if (!isInstanceAlive(entry.getValue())) {
+                removeBeacon(entry.getValue());
+            }
+        }
+    }
+
+    /**
+     * Removes tagged power-up stands that no tracked instance references (leftovers
+     * from a crash/reload before {@code setPersistent(false)} existed). Without this,
+     * orphaned invisible stands linger around the arena indefinitely.
+     */
+    private void sweepOrphanedMarkers(Game game) {
+        World world = game.getArena().getWorld();
+        if (world == null) {
+            return;
+        }
+        Set<UUID> tracked = new HashSet<>();
+        for (GamePowerUpState state : stateByArena.values()) {
+            for (PowerUpInstance instance : state.instances) {
+                if (instance.getMarkerEntityId() != null) {
+                    tracked.add(instance.getMarkerEntityId());
+                }
+            }
+        }
+        for (Entity entity : world.getEntities()) {
+            if (!(entity instanceof ArmorStand stand) || !ArenaEntityUtil.isPowerUpMarker(stand)) {
+                continue;
+            }
+            if (!tracked.contains(stand.getUniqueId())) {
+                stand.remove();
+            }
+        }
+    }
+
+    private void restoreBeaconTerrain(PowerUpInstance instance) {
+        Location base = instance.getBeaconBase();
+        if (base != null) {
+            World world = base.getWorld();
+            if (world != null) {
+                world.getChunkAt(base.getBlockX() >> 4, base.getBlockZ() >> 4).load(true);
+            }
+        }
+        List<BlockState> originals = instance.getBeaconOriginals();
+        for (int i = originals.size() - 1; i >= 0; i--) {
+            originals.get(i).update(true, false);
+        }
+        originals.clear();
+        if (instance.getBeaconBase() != null) {
+            instanceByBeaconBase.remove(instance.getBeaconBase());
+            instance.setBeaconBase(null);
         }
     }
 
@@ -368,6 +571,9 @@ public class PowerUpManager {
         double pickupRadius = plugin.getPluginConfig().getPowerUpPickupRadius();
         Location loc = stand.getLocation();
         for (Player player : game.getAlivePlayers()) {
+            if (plugin.getCurseManager().hasBeastForm(player)) {
+                continue;
+            }
             if (player.getLocation().distance(loc) > pickupRadius) {
                 continue;
             }
@@ -433,6 +639,7 @@ public class PowerUpManager {
             }
             stand.remove();
         }
+        removeBeacon(instance);
         state.instances.remove(instance);
     }
 
@@ -547,19 +754,22 @@ public class PowerUpManager {
         double beamX = base.getX() + 0.5;
         double beamZ = base.getZ() + 0.5;
         double startY = base.getY() + 0.2;
-        int height = plugin.getPluginConfig().getPowerUpBeaconBeamHeightBlocks();
-        double maxY = Math.min(startY + height, world.getMaxHeight() - 1);
 
         Particle accent = def.getParticle();
-        for (double y = startY; y < maxY; y += 2.0) {
-            ParticleUtil.spawnForced(world, Particle.END_ROD, beamX, y, beamZ, 1, 0, 0, 0, 0);
-            if (((int) y) % 6 == 0) {
-                ParticleUtil.spawnForced(world, accent, beamX, y, beamZ, 2, 0.08, 0.08, 0.08, 0.01);
-            }
-        }
-
         ParticleUtil.spawnForced(world, accent, beamX, startY, beamZ, 16, 0.6, 0.15, 0.6, 0.02);
-        ParticleUtil.spawnForced(world, Particle.END_ROD, beamX, startY + 1.0, beamZ, 4, 0.2, 0.05, 0.2, 0.01);
+
+        // The vanilla beacon beam takes over the tall column once the power-up lands.
+        if (instance.getBeaconBase() == null) {
+            int height = plugin.getPluginConfig().getPowerUpBeaconBeamHeightBlocks();
+            double maxY = Math.min(startY + height, world.getMaxHeight() - 1);
+            for (double y = startY; y < maxY; y += 2.0) {
+                ParticleUtil.spawnForced(world, Particle.END_ROD, beamX, y, beamZ, 1, 0, 0, 0, 0);
+                if (((int) y) % 6 == 0) {
+                    ParticleUtil.spawnForced(world, accent, beamX, y, beamZ, 2, 0.08, 0.08, 0.08, 0.01);
+                }
+            }
+            ParticleUtil.spawnForced(world, Particle.END_ROD, beamX, startY + 1.0, beamZ, 4, 0.2, 0.05, 0.2, 0.01);
+        }
 
         if (instance.getState() == PowerUpState.FALLING) {
             Location drop = stand.getLocation();

@@ -91,7 +91,7 @@ public class PlayerGuardianSession {
         dragon = world.spawn(spawnLoc, EnderDragon.class, entity -> {
             entity.setInvulnerable(invulnerable);
             entity.setRemoveWhenFarAway(false);
-            AttributeInstance scale = entity.getAttribute(Attribute.GENERIC_SCALE);
+            AttributeInstance scale = entity.getAttribute(Attribute.SCALE);
             if (scale != null) {
                 scale.setBaseValue(guardianScale);
             }

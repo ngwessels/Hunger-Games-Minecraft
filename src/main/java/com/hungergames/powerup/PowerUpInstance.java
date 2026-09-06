@@ -1,7 +1,10 @@
 package com.hungergames.powerup;
 
 import org.bukkit.Location;
+import org.bukkit.block.BlockState;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 public class PowerUpInstance {
@@ -14,6 +17,8 @@ public class PowerUpInstance {
     private long despawnAtMillis;
     private Location spawnLocation;
     private int beaconTick;
+    private Location beaconBase;
+    private final List<BlockState> beaconOriginals = new ArrayList<>();
 
     public PowerUpInstance(String definitionId, Location spawnLocation) {
         this.instanceId = UUID.randomUUID();
@@ -75,5 +80,17 @@ public class PowerUpInstance {
 
     public int incrementBeaconTick() {
         return ++beaconTick;
+    }
+
+    public Location getBeaconBase() {
+        return beaconBase;
+    }
+
+    public void setBeaconBase(Location beaconBase) {
+        this.beaconBase = beaconBase;
+    }
+
+    public List<BlockState> getBeaconOriginals() {
+        return beaconOriginals;
     }
 }

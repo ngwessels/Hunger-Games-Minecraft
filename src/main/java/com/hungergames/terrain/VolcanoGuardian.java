@@ -65,6 +65,8 @@ public class VolcanoGuardian {
     private double guardianScale;
     private boolean invulnerable;
     private double altitudeAbovePeak;
+    private double awayAltitudeAboveGround;
+    private double awayBlendRadius;
     private double patrolRadiusMin;
     private double patrolRadiusMax;
     private double patrolSpeed;
@@ -75,6 +77,7 @@ public class VolcanoGuardian {
     private double breathDamage;
     private double breathRadius;
     private long breathIntervalMs;
+    private double breathMaxRange;
     private double swoopDamage;
     private long swoopCooldownMs;
     private double swoopSpeedMultiplier;
@@ -91,11 +94,28 @@ public class VolcanoGuardian {
         return active && dragon != null && !dragon.isDead();
     }
 
+    /**
+     * A valid chase target must be online, living, and an active participant.
+     * Dead-but-not-yet-eliminated players (awaiting respawn) and players shielded
+     * by respawn grace are excluded so the guardian drops aggro on death instead
+     * of camping the corpse and re-engaging the player when they respawn.
+     */
+    private boolean isValidChaseTarget(Player player) {
+        if (player == null || !player.isOnline() || player.isDead()) {
+            return false;
+        }
+        if (game == null || game.getSession(player.getUniqueId()) == null) {
+            return false;
+        }
+        return !plugin.getGameManager().isInRespawnGrace(game, player);
+    }
+
     public void configure(TerrainPhaseConfig config) {
         this.phaseConfig = config;
         guardianScale = Math.max(0.5, config.getDouble("volcanoGuardianScale", 1.75));
         invulnerable = config.getInt("volcanoGuardianInvulnerable", 1) != 0;
         altitudeAbovePeak = config.getDouble("volcanoGuardianAltitudeAbovePeak", 15.0);
+        awayAltitudeAboveGround = config.getDouble("volcanoGuardianAwayAltitudeAboveGround", 12.0);
         patrolRadiusMin = config.getDouble("volcanoGuardianPatrolRadiusMin", 28.0);
         patrolRadiusMax = Math.max(patrolRadiusMin, config.getDouble("volcanoGuardianPatrolRadiusMax", 52.0));
         patrolSpeed = config.getDouble("volcanoGuardianPatrolSpeed", 0.28);
@@ -103,9 +123,12 @@ public class VolcanoGuardian {
         playerFollowRadius = config.getDouble("volcanoGuardianPlayerFollowRadius", 85.0);
         returnToVolcanoRadius = config.getDouble("volcanoGuardianReturnToVolcanoRadius", 100.0);
         minDistanceFromVent = config.getDouble("volcanoGuardianMinDistanceFromVent", 22.0);
+        awayBlendRadius = Math.max(minDistanceFromVent,
+                config.getDouble("volcanoGuardianAwayBlendRadius", 90.0));
         breathDamage = config.getDouble("volcanoGuardianBreathDamage", 5.0);
         breathRadius = config.getDouble("volcanoGuardianBreathRadius", 4.0);
         breathIntervalMs = config.getInt("volcanoGuardianBreathIntervalSeconds", 6) * 1000L;
+        breathMaxRange = config.getDouble("volcanoGuardianBreathMaxRange", 24.0);
         swoopDamage = config.getDouble("volcanoGuardianSwoopDamage", 10.0);
         swoopCooldownMs = config.getInt("volcanoGuardianSwoopCooldownSeconds", 14) * 1000L;
         swoopSpeedMultiplier = config.getDouble("volcanoGuardianSwoopSpeedMultiplier", 1.85);
@@ -150,7 +173,7 @@ public class VolcanoGuardian {
         dragon = world.spawn(location, EnderDragon.class, entity -> {
             entity.setInvulnerable(invulnerable);
             entity.setRemoveWhenFarAway(false);
-            AttributeInstance scale = entity.getAttribute(Attribute.GENERIC_SCALE);
+            AttributeInstance scale = entity.getAttribute(Attribute.SCALE);
             if (scale != null) {
                 scale.setBaseValue(guardianScale);
             }
@@ -231,6 +254,15 @@ public class VolcanoGuardian {
     }
 
     private void updateFlightMode(World world) {
+        // Drop aggro immediately if the current target died or is otherwise invalid,
+        // otherwise the dragon keeps diving at the corpse and re-attacks on respawn.
+        if (chaseTarget != null && !isValidChaseTarget(chaseTarget)) {
+            chaseTarget = null;
+            if (flightMode == FlightMode.CHASE) {
+                flightMode = FlightMode.RETURN;
+            }
+        }
+
         Player nearest = findNearestAlivePlayer(world);
         if (nearest == null) {
             if (flightMode == FlightMode.CHASE) {
@@ -290,11 +322,13 @@ public class VolcanoGuardian {
                         * (0.5 + 0.5 * Math.sin(patrolAngle * 0.35));
                 target.setX(volcanoCenterX + Math.cos(patrolAngle) * radius);
                 target.setZ(volcanoCenterZ + Math.sin(patrolAngle) * radius);
-                target.setY(volcanoPeakY + altitudeAbovePeak);
+                target.setY(cruiseAltitudeFor(world, target));
             }
             case CHASE -> {
-                if (chaseTarget == null || !chaseTarget.isOnline()) {
-                    return computeReturnTarget(target);
+                if (!isValidChaseTarget(chaseTarget)) {
+                    chaseTarget = null;
+                    flightMode = FlightMode.RETURN;
+                    return computeReturnTarget(world, target);
                 }
                 if (!swooping && now - lastSwoopMs >= swoopCooldownMs && random.nextDouble() < 0.12) {
                     lastSwoopMs = now;
@@ -307,15 +341,15 @@ public class VolcanoGuardian {
                 if (swooping) {
                     target.setY(Math.max(baseSurfaceY + 6, playerLoc.getY() + 2));
                 } else {
-                    target.setY(Math.max(volcanoPeakY + altitudeAbovePeak, playerLoc.getY() + 8));
+                    target.setY(Math.max(playerLoc.getY() + 8, cruiseAltitudeFor(world, target)));
                 }
             }
-            case RETURN -> target = computeReturnTarget(target);
+            case RETURN -> target = computeReturnTarget(world, target);
         }
         return target;
     }
 
-    private Location computeReturnTarget(Location target) {
+    private Location computeReturnTarget(World world, Location target) {
         double dx = volcanoCenterX - target.getX();
         double dz = volcanoCenterZ - target.getZ();
         double dist = Math.sqrt(dx * dx + dz * dz);
@@ -324,8 +358,29 @@ public class VolcanoGuardian {
             target.setX(target.getX() + (dx / dist) * lead);
             target.setZ(target.getZ() + (dz / dist) * lead);
         }
-        target.setY(volcanoPeakY + altitudeAbovePeak);
+        target.setY(cruiseAltitudeFor(world, target));
         return target;
+    }
+
+    /**
+     * Height the guardian should hold at the given X/Z. At the caldera it flies
+     * caldera-height (peak + altitudeAbovePeak); the farther out it roams, the
+     * more that blends toward a terrain-following height so it can hunt low
+     * across the map instead of circling at caldera altitude.
+     */
+    private double cruiseAltitudeFor(World world, Location target) {
+        double dx = target.getX() - volcanoCenterX;
+        double dz = target.getZ() - volcanoCenterZ;
+        double dist = Math.sqrt(dx * dx + dz * dz);
+        double calderaY = volcanoPeakY + altitudeAbovePeak;
+        double blend = Math.min(1.0, dist / awayBlendRadius);
+        double awayY = groundYAt(world, target) + awayAltitudeAboveGround;
+        return calderaY * (1.0 - blend) + awayY * blend;
+    }
+
+    private int groundYAt(World world, Location target) {
+        int highest = world.getHighestBlockYAt(target.getBlockX(), target.getBlockZ());
+        return Math.max(baseSurfaceY, highest);
     }
 
     private void clampFlyTarget(Location target) {
@@ -371,21 +426,26 @@ public class VolcanoGuardian {
         if (flightMode != FlightMode.CHASE && !hasParticipantNearby(world, breathRadius * guardianScale * 2)) {
             return;
         }
-        lastBreathMs = now;
 
         Location breathCenter = location.clone();
-        if (chaseTarget != null) {
+        if (flightMode == FlightMode.CHASE && isValidChaseTarget(chaseTarget)) {
+            // Only breathe on the target when actually close to it; never snipe
+            // from across the map while still flying in.
+            if (location.distance(chaseTarget.getLocation()) > breathMaxRange) {
+                return;
+            }
             breathCenter = chaseTarget.getLocation().add(0, 1, 0);
         }
 
+        lastBreathMs = now;
         VolcanoGuardianBreath.fire(game, world, breathCenter, phaseConfig, guardianScale, null);
     }
 
     private void tickSwoopDamage(World world, long now) {
-        if (now >= swoopEndMs || flightMode != FlightMode.CHASE || chaseTarget == null) {
+        if (now >= swoopEndMs || flightMode != FlightMode.CHASE || !isValidChaseTarget(chaseTarget)) {
             return;
         }
-        if (horizontalDistance(chaseTarget.getLocation()) > contactRadius * guardianScale * 1.5) {
+        if (location.distance(chaseTarget.getLocation()) > contactRadius * guardianScale * 1.5) {
             return;
         }
         if (now - lastContactMs < contactIntervalMs) {
@@ -409,6 +469,9 @@ public class VolcanoGuardian {
         double radius = contactRadius * guardianScale;
         for (Player player : game.getAlivePlayers()) {
             if (!player.getWorld().equals(world)) {
+                continue;
+            }
+            if (!isValidChaseTarget(player)) {
                 continue;
             }
             if (player.getLocation().distance(location) > radius) {
@@ -458,6 +521,9 @@ public class VolcanoGuardian {
             if (!player.getWorld().equals(world)) {
                 continue;
             }
+            if (!isValidChaseTarget(player)) {
+                continue;
+            }
             if (player.getLocation().distanceSquared(location) <= radiusSq) {
                 return true;
             }
@@ -472,6 +538,9 @@ public class VolcanoGuardian {
             if (!player.getWorld().equals(world)) {
                 continue;
             }
+            if (!isValidChaseTarget(player)) {
+                continue;
+            }
             double distSq = player.getLocation().distanceSquared(location);
             if (distSq < nearestDistSq) {
                 nearestDistSq = distSq;
@@ -479,12 +548,6 @@ public class VolcanoGuardian {
             }
         }
         return nearest;
-    }
-
-    private double horizontalDistance(Location other) {
-        double dx = other.getX() - location.getX();
-        double dz = other.getZ() - location.getZ();
-        return Math.sqrt(dx * dx + dz * dz);
     }
 
     private double horizontalDistanceSquared(Location other) {

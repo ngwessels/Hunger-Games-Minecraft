@@ -6,6 +6,7 @@ import com.hungergames.game.Game;
 import com.hungergames.gamemode.TerrainPhaseConfig;
 import com.hungergames.terrain.PhaseDurationResolver;
 import com.hungergames.terrain.TerrainPhase;
+import com.hungergames.util.ArenaEntityUtil;
 
 public class ForestPhase implements TerrainPhase {
 
@@ -27,6 +28,7 @@ public class ForestPhase implements TerrainPhase {
         continuous = PhaseDurationResolver.isContinuous(config);
         int resolved = plugin.getTerrainPhaseManager().getResolvedDurationSeconds();
         endTime = continuous ? Long.MAX_VALUE : System.currentTimeMillis() + resolved * 1000L;
+        ArenaEntityUtil.clearUntaggedHostiles(arena.getWorld(), arena);
     }
 
     @Override

@@ -48,7 +48,7 @@ public class GameHudManager {
         bossBar.setTitle(ColorUtil.color("&eStarting in &f" + remaining + "s"));
         bossBar.setProgress(Math.max(0, Math.min(1, remaining / (double) plugin.getPluginConfig().getDefaultCountdown())));
         bossBar.setColor(BarColor.GREEN);
-        updateScoreboard(game, "Countdown", remaining + "s", "-", game.getAlivePlayers().size(), "-");
+        updateScoreboard(game, "Countdown", remaining + "s", "-", game.countLivingTributes(), "-");
     }
 
     private void updateGrace(Game game, BossBar bossBar) {
@@ -59,7 +59,7 @@ public class GameHudManager {
                         + " &7| Match: &f" + formatMatchTimeLabel(game)));
         bossBar.setProgress(matchTimeProgress(game, total > 0 ? remaining / (double) total : 0));
         bossBar.setColor(BarColor.BLUE);
-        updateScoreboard(game, "Grace", formatTime(remaining), formatMatchTimeLabel(game), game.getAlivePlayers().size(), "-");
+        updateScoreboard(game, "Grace", formatTime(remaining), formatMatchTimeLabel(game), game.countLivingTributes(), "-");
     }
 
     private void updateActive(Game game, BossBar bossBar) {
@@ -69,7 +69,7 @@ public class GameHudManager {
         int phaseTotal = plugin.getTerrainPhaseManager().getPhaseDurationSeconds();
         boolean continuous = plugin.getTerrainPhaseManager().isPhaseContinuous(game);
         String phaseName = plugin.getTerrainPhaseManager().getCurrentPhaseName().replace('_', ' ');
-        int alive = game.getAlivePlayers().size();
+        int alive = game.countLivingTributes();
         String killsLabel = formatKillsLeaderLabel(game);
 
         String phaseTimeLabel = continuous
@@ -99,7 +99,13 @@ public class GameHudManager {
     }
 
     private void updateEnding(Game game, BossBar bossBar) {
-        bossBar.setTitle(ColorUtil.color("&6&lMatch Over"));
+        if (plugin.getVolcanoComet().isImpacting(game)) {
+            bossBar.setTitle(ColorUtil.color("&c&lCOMET IMPACT &7| &6The arena is being destroyed"));
+            bossBar.setProgress(1.0);
+            bossBar.setColor(BarColor.RED);
+            return;
+        }
+        bossBar.setTitle(ColorUtil.color("&6&lMatch Over &7| &eResetting arena..."));
         bossBar.setProgress(1.0);
         bossBar.setColor(BarColor.PURPLE);
     }
@@ -107,6 +113,9 @@ public class GameHudManager {
     private void updateScoreboard(Game game, String phase, String phaseTime, String matchTime, int alive,
                                   String killsLabel) {
         for (Player player : game.getAllParticipants()) {
+            if (!player.isOnline()) {
+                continue;
+            }
             Scoreboard board = Bukkit.getScoreboardManager().getNewScoreboard();
             Objective obj = board.registerNewObjective("hg", Criteria.DUMMY, ColorUtil.color("&6&lHunger Games"));
             obj.setDisplaySlot(DisplaySlot.SIDEBAR);
@@ -137,7 +146,7 @@ public class GameHudManager {
             return "Kills: &f0&7/&f" + killsToWin;
         }
 
-        return "Leader: &f" + leader.getPlayer().getName()
+        return "Leader: &f" + leader.getPlayerName()
                 + " &7(&f" + leader.getPlayerKills() + "&7/&f" + killsToWin + "&7)";
     }
 
@@ -148,7 +157,8 @@ public class GameHudManager {
             }
         }
         for (Player player : new ArrayList<>(bossBar.getPlayers())) {
-            if (!game.isParticipant(player.getUniqueId())) {
+            PlayerSession session = game.getSession(player.getUniqueId());
+            if (session == null || session.isDisconnected() || !player.isOnline()) {
                 bossBar.removePlayer(player);
             }
         }

@@ -1,6 +1,7 @@
 package com.hungergames.terrain;
 
 import com.hungergames.game.Game;
+import com.hungergames.game.PlayerSession;
 import com.hungergames.gamemode.TerrainPhaseConfig;
 import com.hungergames.util.ParticleUtil;
 import org.bukkit.Location;
@@ -40,6 +41,10 @@ public final class VolcanoGuardianBreath {
 
         for (Player player : game.getAlivePlayers()) {
             if (player.equals(exclude) || !player.getWorld().equals(world)) {
+                continue;
+            }
+            PlayerSession session = game.getSession(player.getUniqueId());
+            if (player.isDead() || (session != null && session.isInRespawnGrace())) {
                 continue;
             }
             if (player.getLocation().distance(breathCenter) > breathRadius + 1.5) {

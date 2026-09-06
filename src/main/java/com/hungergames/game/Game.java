@@ -74,23 +74,58 @@ public class Game {
     public List<Player> getAlivePlayers() {
         List<Player> alive = new ArrayList<>();
         for (PlayerSession session : sessions.values()) {
-            if (session.isAlive() && !session.isSpectator()) {
-                alive.add(session.getPlayer());
+            if (!session.isAlive() || session.isSpectator() || session.isDisconnected()) {
+                continue;
+            }
+            Player player = session.getOnlinePlayer();
+            if (player != null) {
+                alive.add(player);
             }
         }
         return alive;
     }
 
+    public int countLivingTributes() {
+        int living = 0;
+        for (PlayerSession session : sessions.values()) {
+            if (session.isAlive() && !session.isSpectator()) {
+                living++;
+            }
+        }
+        return living;
+    }
+
+    public UUID getLivingTributeId() {
+        for (PlayerSession session : sessions.values()) {
+            if (session.isAlive() && !session.isSpectator()) {
+                return session.getPlayerId();
+            }
+        }
+        return null;
+    }
+
     public List<Player> getAllParticipants() {
         List<Player> players = new ArrayList<>();
         for (PlayerSession session : sessions.values()) {
-            players.add(session.getPlayer());
+            if (session.isDisconnected()) {
+                continue;
+            }
+            Player player = session.getOnlinePlayer();
+            if (player != null) {
+                players.add(player);
+            }
         }
         return players;
     }
 
     public List<Player> getNotificationRecipients() {
-        List<Player> recipients = new ArrayList<>(getAllParticipants());
+        List<Player> recipients = new ArrayList<>();
+        for (PlayerSession session : sessions.values()) {
+            Player player = session.getOnlinePlayer();
+            if (player != null) {
+                recipients.add(player);
+            }
+        }
         if (simulationObserverId != null) {
             Player observer = Bukkit.getPlayer(simulationObserverId);
             if (observer != null && observer.isOnline() && !recipients.contains(observer)) {

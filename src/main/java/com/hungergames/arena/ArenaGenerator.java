@@ -24,14 +24,25 @@ public class ArenaGenerator {
 
     /** Clear up to this height when (re)generating; must exceed max volcano cone peak. */
     private static final int CLEAR_HEIGHT = 125;
-
     private final HungerGamesPlugin plugin;
 
     public ArenaGenerator(HungerGamesPlugin plugin) {
         this.plugin = plugin;
     }
 
+    private void logSettlements(Arena arena, GameMode gameMode) {
+        if (!Settlements.isActive(arena, gameMode)) {
+            return;
+        }
+        SettlementLayout layout = arena.getSettlementLayout();
+        long chests = layout.getChestSites().size();
+        plugin.getLogger().info("Settlements for arena " + arena.getName() + ": "
+                + layout.getMobSites().size() + " mob site(s), " + chests
+                + " chest(s), " + layout.getChurches().size() + " church(es).");
+    }
+
     public void generate(Arena arena, GameMode gameMode, Player player, Runnable onComplete) {
+        arena.setRadius(gameMode.getArenaRadius());
         World world = plugin.getArenaManager().getOrCreateWorld(arena);
         if (world == null) {
             if (player != null) {
@@ -43,14 +54,68 @@ public class ArenaGenerator {
     }
 
     public void reset(Arena arena, GameMode gameMode, Player player, Runnable onComplete) {
-        World world = arena.getWorld();
+        restoreOrRebuild(arena, gameMode, player, "&areset!", onComplete);
+    }
+
+    public void regenerateInterior(Arena arena, GameMode gameMode, Consumer<Double> progress, Runnable onComplete) {
+        restoreOrRebuild(arena, gameMode, null, null, onComplete);
+    }
+
+    private void restoreOrRebuild(Arena arena, GameMode gameMode, Player player,
+                                  String successVerb, Runnable onComplete) {
+        if (plugin.getArenaManager().hasTemplate(arena)) {
+            if (player != null) {
+                player.sendMessage(plugin.formatMessage("&7Restoring arena from saved copy..."));
+            }
+            plugin.getArenaManager().restoreFromTemplate(arena, success -> {
+                if (!success) {
+                    plugin.getLogger().warning("Template restore failed for " + arena.getName()
+                            + "; rebuilding terrain.");
+                    rebuildFromScratch(arena, gameMode, player, successVerb, onComplete);
+                    return;
+                }
+                finishRestoredWorld(arena, gameMode, player, successVerb, onComplete);
+            });
+            return;
+        }
+        if (player != null) {
+            player.sendMessage(plugin.formatMessage(
+                    "&7No saved copy yet — rebuilding, then saving a copy for next time."));
+        }
+        rebuildFromScratch(arena, gameMode, player, successVerb, onComplete);
+    }
+
+    private void rebuildFromScratch(Arena arena, GameMode gameMode, Player player,
+                                    String successVerb, Runnable onComplete) {
+        World world = plugin.getArenaManager().getOrCreateWorld(arena);
         if (world == null) {
             if (player != null) {
-                player.sendMessage(plugin.formatMessage("&cArena world is not loaded."));
+                player.sendMessage(plugin.formatMessage("&cFailed to load arena world."));
+            }
+            if (onComplete != null) {
+                onComplete.run();
             }
             return;
         }
-        rebuild(arena, gameMode, player, world, "Resetting arena...", "&areset!", onComplete);
+        String verb = successVerb != null ? successVerb : "&areset!";
+        rebuild(arena, gameMode, player, world, "Resetting arena...", verb, onComplete);
+    }
+
+    private void finishRestoredWorld(Arena arena, GameMode gameMode, Player player,
+                                     String successVerb, Runnable onComplete) {
+        World world = arena.getWorld();
+        if (world != null) {
+            setupWorldBorder(world, arena);
+            Settlements.refreshLayout(arena, gameMode);
+            ArcticRing.refreshLayout(arena, gameMode);
+            plugin.getArenaManager().save();
+        }
+        if (player != null && successVerb != null) {
+            player.sendMessage(plugin.formatMessage("&aArena &e" + arena.getName() + " " + successVerb));
+        }
+        if (onComplete != null) {
+            onComplete.run();
+        }
     }
 
     private void rebuild(Arena arena, GameMode gameMode, Player player, World world,
@@ -77,8 +142,18 @@ public class ArenaGenerator {
         int minZ = (int) (cz - radius - wallThickness - 5);
         int maxZ = (int) (cz + radius + wallThickness + 5);
 
+        int forestRadius = gameMode.getForestRadius();
+        int blendWidth = gameMode.getArctic() != null && gameMode.getArctic().isEnabled()
+                ? gameMode.getArctic().getBlendWidth() : 0;
         int[][] heightmap = TerrainHeightmap.generate(cx, cz, radius, minX, maxX, minZ, maxZ,
-                baseY, seed, gameMode.getInitialTerrain());
+                baseY, seed, gameMode.getInitialTerrain(), forestRadius, blendWidth);
+
+        double[] groveArea = JungleGrove.groveArea(arena, gameMode);
+        double[] settlementSites = Settlements.isActive(arena, gameMode)
+                ? Settlements.siteCoordinates(Settlements.planSites(arena, gameMode))
+                : null;
+        List<VolcanoPonds.Pond> ponds = VolcanoPonds.plan(arena, gameMode, groveArea,
+                settlementSites, heightmap, minX, minZ);
 
         clearInteriorAboveSurface(changes, heightmap, minX, maxX, minZ, maxZ, cx, cz, radius);
 
@@ -92,7 +167,8 @@ public class ArenaGenerator {
                 }
 
                 if (inside) {
-                    buildInteriorColumn(changes, gameMode, heightmap, minX, minZ, x, z, seed, cx, cz, radius);
+                    buildInteriorColumn(changes, arena, gameMode, groveArea, settlementSites, ponds,
+                            heightmap, minX, minZ, x, z, seed, cx, cz, forestRadius);
                 }
 
                 if (inWall) {
@@ -109,7 +185,14 @@ public class ArenaGenerator {
 
         int centerSurface = TerrainHeightmap.getHeight(heightmap, minX, minZ, (int) cx, (int) cz);
         addCenterFeature(changes, gameMode, cx, centerSurface, cz);
-        plantInteriorTrees(changes, gameMode, heightmap, minX, maxX, minZ, maxZ, seed, cx, cz, radius);
+        plantInteriorTrees(changes, arena, gameMode, groveArea, settlementSites, ponds, heightmap,
+                minX, maxX, minZ, maxZ, seed, cx, cz, forestRadius);
+        VolcanoPonds.add(changes, arena, gameMode, heightmap, minX, minZ, ponds);
+        JungleGrove.addJungleGrove(changes, arena, gameMode, heightmap, minX, minZ);
+        Settlements.addBuildings(changes, arena, gameMode, heightmap, minX, minZ,
+                arena.getSettlementLayout());
+        ArcticRing.add(changes, arena, gameMode, heightmap, minX, minZ);
+        logSettlements(arena, gameMode);
 
         BlockBatchUtil.applyBatched(plugin, world, changes, plugin.getPluginConfig().getBlocksPerTick(),
                 progress -> {
@@ -120,7 +203,7 @@ public class ArenaGenerator {
                 () -> {
                     applyBiomes(world, arena, gameMode);
                     setupWorldBorder(world, arena);
-                    List<Location> spawns = computeSpawnRing(world, arena, heightmap, minX, minZ);
+                    List<Location> spawns = computeSpawnRing(world, arena, gameMode);
                     arena.setSpawnPoints(spawns);
                     arena.setCenterSpawn(SpawnLocationUtil.findSafeSpawn(
                             world, (int) cx, (int) cz, baseY));
@@ -135,77 +218,29 @@ public class ArenaGenerator {
                         filled = plugin.getLootBoxManager().fillCornucopiaChests(arena, gameMode.getLootTier());
                     }
                     if (progressBar != null) {
-                        progressBar.removeAll();
+                        progressBar.setTitle("Saving arena copy...");
+                        progressBar.setProgress(1.0);
                     }
-                    if (player != null) {
-                        player.sendMessage(plugin.formatMessage("&aArena &e" + arena.getName() + " " + successVerb + "!"));
-                        if (filled > 0) {
-                            player.sendMessage(plugin.formatMessage("&7Cornucopia chests filled with &e" + filled
-                                    + " &7container(s)."));
+                    int filledChests = filled;
+                    plugin.getArenaManager().captureTemplate(arena, success -> {
+                        if (progressBar != null) {
+                            progressBar.removeAll();
                         }
-                    }
-                    if (onComplete != null) {
-                        onComplete.run();
-                    }
-                });
-    }
-
-    public void regenerateInterior(Arena arena, GameMode gameMode, Consumer<Double> progress, Runnable onComplete) {
-        World world = arena.getWorld();
-        if (world == null) {
-            if (onComplete != null) {
-                onComplete.run();
-            }
-            return;
-        }
-
-        int baseY = (int) arena.getCenterY();
-        int radius = arena.getRadius();
-        double cx = arena.getCenterX();
-        double cz = arena.getCenterZ();
-        int seed = arena.getTerrainSeed();
-
-        List<BlockBatchUtil.BlockChange> changes = BlockBatchUtil.newChangeList();
-        int minX = (int) (cx - radius);
-        int maxX = (int) (cx + radius);
-        int minZ = (int) (cz - radius);
-        int maxZ = (int) (cz + radius);
-
-        int[][] heightmap = TerrainHeightmap.generate(cx, cz, radius, minX, maxX, minZ, maxZ,
-                baseY, seed, gameMode.getInitialTerrain());
-
-        clearInteriorAboveSurface(changes, heightmap, minX, maxX, minZ, maxZ, cx, cz, radius);
-
-        for (int x = minX; x <= maxX; x++) {
-            for (int z = minZ; z <= maxZ; z++) {
-                if (!CircleUtil.isInsideCircle(cx, cz, x, z, radius)) {
-                    continue;
-                }
-                buildInteriorColumn(changes, gameMode, heightmap, minX, minZ, x, z, seed, cx, cz, radius);
-            }
-        }
-
-        int centerSurface = TerrainHeightmap.getHeight(heightmap, minX, minZ, (int) cx, (int) cz);
-        addCenterFeature(changes, gameMode, cx, centerSurface, cz);
-        plantInteriorTrees(changes, gameMode, heightmap, minX, maxX, minZ, maxZ, seed, cx, cz, radius);
-
-        BlockBatchUtil.applyBatched(plugin, world, changes, plugin.getPluginConfig().getBlocksPerTick(),
-                progress, () -> {
-                    applyBiomes(world, arena, gameMode);
-                    if ("volcano".equalsIgnoreCase(gameMode.getInitialTerrain())) {
-                        VolcanoCaldera.activateCalderaLava(world, cx, centerSurface, cz);
-                    }
-                    List<Location> spawns = computeSpawnRing(world, arena, heightmap, minX, minZ);
-                    arena.setSpawnPoints(spawns);
-                    arena.setCenterSpawn(SpawnLocationUtil.findSafeSpawn(
-                            world, (int) cx, (int) cz, baseY));
-                    plugin.getArenaManager().save();
-                    if (plugin.getLootBoxManager().usesCornucopiaChests(gameMode)) {
-                        plugin.getLootBoxManager().fillCornucopiaChests(arena, gameMode.getLootTier());
-                    }
-                    if (onComplete != null) {
-                        onComplete.run();
-                    }
+                        if (player != null) {
+                            player.sendMessage(plugin.formatMessage("&aArena &e" + arena.getName() + " " + successVerb));
+                            if (filledChests > 0) {
+                                player.sendMessage(plugin.formatMessage("&7Cornucopia chests filled with &e" + filledChests
+                                        + " &7container(s)."));
+                            }
+                            if (!success) {
+                                player.sendMessage(plugin.formatMessage(
+                                        "&cCould not save a reset copy. The next reset will rebuild the map."));
+                            }
+                        }
+                        if (onComplete != null) {
+                            onComplete.run();
+                        }
+                    });
                 });
     }
 
@@ -225,24 +260,35 @@ public class ArenaGenerator {
         }
     }
 
-    private void buildInteriorColumn(List<BlockBatchUtil.BlockChange> changes, GameMode gameMode,
-                                     int[][] heightmap, int minX, int minZ, int x, int z,
-                                     int seed, double cx, double cz, int radius) {
+    private void buildInteriorColumn(List<BlockBatchUtil.BlockChange> changes, Arena arena, GameMode gameMode,
+                                     double[] groveArea, double[] settlementSites, List<VolcanoPonds.Pond> ponds,
+                                     int[][] heightmap, int minX, int minZ,
+                                     int x, int z, int seed, double cx, double cz, int radius) {
         int surfaceY = TerrainHeightmap.getHeight(heightmap, minX, minZ, x, z);
         boolean volcanoMode = "volcano".equalsIgnoreCase(gameMode.getInitialTerrain());
         for (int y = 1; y < surfaceY; y++) {
             Material mat = getSubsurfaceMaterial(gameMode.getInitialTerrain(), x, y, z, surfaceY, seed, cx, cz);
+            mat = ArcticRing.subsurfaceMaterial(arena, gameMode, x, y, z, surfaceY, seed, mat);
             changes.add(new BlockBatchUtil.BlockChange(x, y, z, mat));
         }
         Material surface = getSurfaceMaterial(gameMode.getInitialTerrain(), x, z, seed, cx, cz);
+        surface = ArcticRing.surfaceMaterial(arena, gameMode, x, z, seed, surface);
         changes.add(new BlockBatchUtil.BlockChange(x, surfaceY, z, surface));
 
-        if (!shouldPlantTree(gameMode, heightmap, minX, minZ, x, z, surface, seed, cx, cz, radius)) {
+        if (!ArcticRing.isArcticColumn(arena, gameMode, x, z)
+                && !VolcanoPonds.isInside(ponds, x, z, 1.5)
+                && !shouldPlantTree(arena, gameMode, groveArea, settlementSites, ponds, heightmap, minX, minZ,
+                x, z, surface, seed, cx, cz, radius)) {
             addSurfaceDecoration(changes, surface, x, surfaceY + 1, z, seed, volcanoMode);
+        }
+        if (ArcticRing.isArcticColumn(arena, gameMode, x, z) && surface == Material.SNOW_BLOCK
+                && NoiseUtil.continuousNoise2D(x * 0.27, z * 0.27, seed + 55) > 0.15) {
+            changes.add(new BlockBatchUtil.BlockChange(x, surfaceY + 1, z, Material.SNOW));
         }
     }
 
-    private void plantInteriorTrees(List<BlockBatchUtil.BlockChange> changes, GameMode gameMode,
+    private void plantInteriorTrees(List<BlockBatchUtil.BlockChange> changes, Arena arena, GameMode gameMode,
+                                    double[] groveArea, double[] settlementSites, List<VolcanoPonds.Pond> ponds,
                                     int[][] heightmap, int minX, int maxX, int minZ, int maxZ,
                                     int seed, double cx, double cz, int radius) {
         TreePlacementConfig trees = gameMode.getTreePlacement();
@@ -256,16 +302,25 @@ public class ArenaGenerator {
                 }
                 int surfaceY = TerrainHeightmap.getHeight(heightmap, minX, minZ, x, z);
                 Material surface = getSurfaceMaterial(gameMode.getInitialTerrain(), x, z, seed, cx, cz);
-                if (shouldPlantTree(gameMode, heightmap, minX, minZ, x, z, surface, seed, cx, cz, radius)) {
+                if (shouldPlantTree(arena, gameMode, groveArea, settlementSites, ponds, heightmap, minX, minZ,
+                        x, z, surface, seed, cx, cz, radius)) {
                     TreePlacement.addTree(changes, x, surfaceY + 1, z, seed, trees);
                 }
             }
         }
     }
 
-    private boolean shouldPlantTree(GameMode gameMode, int[][] heightmap, int minX, int minZ,
+    private boolean shouldPlantTree(Arena arena, GameMode gameMode, double[] groveArea,
+                                    double[] settlementSites, List<VolcanoPonds.Pond> ponds,
+                                    int[][] heightmap, int minX, int minZ,
                                     int x, int z, Material surface, int seed,
                                     double cx, double cz, int radius) {
+        if (JungleGrove.isInside(groveArea, x, z)
+                || Settlements.isNearAnySite(settlementSites, x, z)
+                || VolcanoPonds.isInside(ponds, x, z, 1.5)
+                || ArcticRing.isArcticColumn(arena, gameMode, x, z)) {
+            return false;
+        }
         TreePlacementConfig trees = gameMode.getTreePlacement();
         return trees != null && trees.isEnabled()
                 && TreePlacement.shouldPlaceTree(x, z, cx, cz, radius, seed, surface, trees)
@@ -372,19 +427,28 @@ public class ArenaGenerator {
         Biome defaultBiome = switch (terrain) {
             case "barren" -> Biome.SAVANNA;
             case "mixed" -> Biome.PLAINS;
-            case "volcano" -> Biome.BASALT_DELTAS;
+            case "volcano" -> Biome.FOREST;
             default -> Biome.FOREST;
         };
         int radius = arena.getRadius();
         double cx = arena.getCenterX();
         double cz = arena.getCenterZ();
+        double[] groveArea = JungleGrove.groveArea(arena, gameMode);
         for (int x = (int) (cx - radius); x <= cx + radius; x++) {
             for (int z = (int) (cz - radius); z <= cz + radius; z++) {
                 if (CircleUtil.isInsideCircle(cx, cz, x, z, radius)) {
                     Biome biome = defaultBiome;
-                    if ("volcano".equals(terrain)
-                            && CircleUtil.isInsideCircle(cx, cz, x, z, VolcanoCaldera.NO_TREE_RADIUS)) {
-                        biome = Biome.SOUL_SAND_VALLEY;
+                    if ("volcano".equals(terrain)) {
+                        if (CircleUtil.isInsideCircle(cx, cz, x, z, VolcanoCaldera.NO_TREE_RADIUS)) {
+                            biome = Biome.SOUL_SAND_VALLEY;
+                        } else if (JungleGrove.isInside(groveArea, x, z)) {
+                            biome = Biome.JUNGLE;
+                        } else {
+                            Biome arctic = ArcticRing.biomeAt(arena, gameMode, x, z);
+                            if (arctic != null) {
+                                biome = arctic;
+                            }
+                        }
                     }
                     world.setBiome(x, (int) arena.getCenterY(), z, biome);
                 }
@@ -400,10 +464,11 @@ public class ArenaGenerator {
         world.getWorldBorder().setWarningDistance(5);
     }
 
-    private List<Location> computeSpawnRing(World world, Arena arena, int[][] heightmap, int minX, int minZ) {
+    private List<Location> computeSpawnRing(World world, Arena arena, GameMode gameMode) {
         List<Location> spawns = new ArrayList<>();
-        int count = Math.max(8, Math.min(24, arena.getRadius() / 5));
-        double spawnRadius = arena.getRadius() * 0.8;
+        int forest = gameMode.getForestRadius();
+        int count = Math.max(8, Math.min(24, forest / 5));
+        double spawnRadius = forest * 0.8;
         double cx = arena.getCenterX();
         double cz = arena.getCenterZ();
         int baseY = (int) arena.getCenterY();

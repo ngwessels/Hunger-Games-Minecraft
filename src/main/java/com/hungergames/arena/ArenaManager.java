@@ -1,6 +1,7 @@
 package com.hungergames.arena;
 
 import com.hungergames.HungerGamesPlugin;
+import com.hungergames.util.ArenaEntityUtil;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.World;
@@ -8,15 +9,20 @@ import org.bukkit.WorldCreator;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
+import org.bukkit.entity.Player;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
+import java.util.function.Consumer;
+import java.util.logging.Level;
 
 public class ArenaManager {
 
@@ -53,9 +59,9 @@ public class ArenaManager {
                     arenaSection.getDouble("center.z", Arena.DEFAULT_CENTER_Z)
             );
             migrateLegacyHeights(arena);
-            arena.setRadius(arenaSection.getInt("radius"));
-            arena.setWallHeight(arenaSection.getInt("wallHeight", plugin.getPluginConfig().getDefaultWallHeight()));
             arena.setGameModeId(arenaSection.getString("gameMode", "standard"));
+            arena.setRadius(arenaSection.getInt("radius", Arena.RADIUS));
+            arena.setWallHeight(Arena.WALL_HEIGHT);
             arena.setGenerated(arenaSection.getBoolean("generated", false));
             if (arenaSection.contains("terrainSeed")) {
                 arena.setTerrainSeed(arenaSection.getInt("terrainSeed"));
@@ -63,15 +69,15 @@ public class ArenaManager {
 
             List<?> spawns = arenaSection.getList("spawns");
             if (spawns != null) {
+                World world = Bukkit.getWorld(arena.getWorldName());
                 for (Object obj : spawns) {
                     if (obj instanceof Map<?, ?> map) {
-                        double x = toDouble(map.get("x"));
-                        double y = toDouble(map.get("y"));
-                        double z = toDouble(map.get("z"));
-                        World world = Bukkit.getWorld(arena.getWorldName());
-                        if (world != null) {
-                            arena.getSpawnPoints().add(new Location(world, x, y, z));
-                        }
+                        arena.getSpawnPoints().add(new Location(
+                                world,
+                                toDouble(map.get("x")),
+                                toDouble(map.get("y")),
+                                toDouble(map.get("z"))
+                        ));
                     }
                 }
             }
@@ -79,14 +85,12 @@ public class ArenaManager {
             ConfigurationSection centerSpawn = arenaSection.getConfigurationSection("centerSpawn");
             if (centerSpawn != null) {
                 World world = Bukkit.getWorld(arena.getWorldName());
-                if (world != null) {
-                    arena.setCenterSpawn(new Location(
-                            world,
-                            centerSpawn.getDouble("x"),
-                            centerSpawn.getDouble("y"),
-                            centerSpawn.getDouble("z")
-                    ));
-                }
+                arena.setCenterSpawn(new Location(
+                        world,
+                        centerSpawn.getDouble("x"),
+                        centerSpawn.getDouble("y"),
+                        centerSpawn.getDouble("z")
+                ));
             }
 
             arenas.put(key.toLowerCase(), arena);
@@ -96,9 +100,6 @@ public class ArenaManager {
     private void migrateLegacyHeights(Arena arena) {
         if (arena.getCenterY() == Arena.LEGACY_CENTER_Y) {
             arena.setCenter(arena.getCenterX(), plugin.getPluginConfig().getBaseTerrainY(), arena.getCenterZ());
-        }
-        if (arena.getWallHeight() == Arena.LEGACY_WALL_HEIGHT) {
-            arena.setWallHeight(plugin.getPluginConfig().getDefaultWallHeight());
         }
     }
 
@@ -118,7 +119,7 @@ public class ArenaManager {
             config.set(path + ".center.y", arena.getCenterY());
             config.set(path + ".center.z", arena.getCenterZ());
             config.set(path + ".radius", arena.getRadius());
-            config.set(path + ".wallHeight", arena.getWallHeight());
+            config.set(path + ".wallHeight", Arena.WALL_HEIGHT);
             config.set(path + ".gameMode", arena.getGameModeId());
             config.set(path + ".generated", arena.isGenerated());
             config.set(path + ".terrainSeed", arena.getTerrainSeed());
@@ -147,14 +148,14 @@ public class ArenaManager {
         }
     }
 
-    public Arena createArena(String name, int radius, int wallHeight) {
+    public Arena createArena(String name) {
         Arena arena = new Arena(name);
         arena.setCenter(
                 Arena.DEFAULT_CENTER_X,
                 plugin.getPluginConfig().getBaseTerrainY(),
                 Arena.DEFAULT_CENTER_Z);
-        arena.setRadius(radius);
-        arena.setWallHeight(wallHeight);
+        arena.setRadius(Arena.RADIUS);
+        arena.setWallHeight(Arena.WALL_HEIGHT);
         arenas.put(name.toLowerCase(), arena);
         save();
         return arena;
@@ -175,39 +176,241 @@ public class ArenaManager {
         }
         World world = arena.getWorld();
         if (world != null) {
+            evictPlayers(world);
             Bukkit.unloadWorld(world, false);
-            File worldFolder = new File(Bukkit.getWorldContainer(), world.getName());
-            deleteFolder(worldFolder);
+        }
+        try {
+            ArenaWorldCopy.deleteRecursively(getPlayWorldFolder(arena));
+            ArenaWorldCopy.deleteRecursively(getTemplateWorldFolder(arena));
+        } catch (IOException e) {
+            plugin.getLogger().log(Level.WARNING, "Failed to delete arena world folders for " + name, e);
         }
         save();
         return true;
     }
 
-    private void deleteFolder(File folder) {
-        if (!folder.exists()) {
-            return;
-        }
-        File[] files = folder.listFiles();
-        if (files != null) {
-            for (File file : files) {
-                if (file.isDirectory()) {
-                    deleteFolder(file);
-                } else {
-                    file.delete();
-                }
-            }
-        }
-        folder.delete();
+    public File getPlayWorldFolder(Arena arena) {
+        return new File(Bukkit.getWorldContainer(), arena.getWorldName());
+    }
+
+    public File getTemplateWorldFolder(Arena arena) {
+        return new File(Bukkit.getWorldContainer(), arena.getWorldName() + "_template");
+    }
+
+    public boolean hasTemplate(Arena arena) {
+        return new File(getTemplateWorldFolder(arena), "level.dat").isFile();
     }
 
     public World getOrCreateWorld(Arena arena) {
         World existing = arena.getWorld();
         if (existing != null) {
+            ArenaEntityUtil.suppressVanillaMonsterSpawning(existing);
+            bindWorldLocations(arena, existing);
             return existing;
         }
+        recoverPlayWorldFromTemplateIfNeeded(arena);
         WorldCreator creator = new WorldCreator(arena.getWorldName());
         creator.generator(new VoidChunkGenerator());
         creator.environment(World.Environment.NORMAL);
-        return creator.createWorld();
+        World world = creator.createWorld();
+        ArenaEntityUtil.suppressVanillaMonsterSpawning(world);
+        bindWorldLocations(arena, world);
+        return world;
+    }
+
+    private void recoverPlayWorldFromTemplateIfNeeded(Arena arena) {
+        File play = getPlayWorldFolder(arena);
+        if (new File(play, "level.dat").isFile() || !hasTemplate(arena)) {
+            return;
+        }
+        try {
+            ArenaWorldCopy.deleteRecursively(play);
+            ArenaWorldCopy.copyDirectory(getTemplateWorldFolder(arena), play);
+            plugin.getLogger().info("Recovered arena world " + arena.getWorldName() + " from template.");
+        } catch (IOException e) {
+            plugin.getLogger().log(Level.SEVERE, "Failed to recover arena world from template", e);
+        }
+    }
+
+    public void bindWorldLocations(Arena arena, World world) {
+        if (world == null) {
+            return;
+        }
+        List<Location> rebound = new ArrayList<>();
+        for (Location loc : arena.getSpawnPoints()) {
+            rebound.add(new Location(world, loc.getX(), loc.getY(), loc.getZ(), loc.getYaw(), loc.getPitch()));
+        }
+        arena.setSpawnPoints(rebound);
+        if (arena.getCenterSpawn() != null) {
+            Location cs = arena.getCenterSpawn();
+            arena.setCenterSpawn(new Location(world, cs.getX(), cs.getY(), cs.getZ(), cs.getYaw(), cs.getPitch()));
+        }
+    }
+
+    /**
+     * Unloads the play world, copies it to {@code <world>_template}, then reloads
+     * the play world. Call after a clean generation so later resets can swap folders.
+     */
+    public void captureTemplate(Arena arena, Consumer<Boolean> done) {
+        World world = arena.getWorld();
+        if (world == null) {
+            complete(done, false);
+            return;
+        }
+        List<EvictedPlayer> evicted = evictPlayers(world);
+        world.save();
+        plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
+            if (!unloadPlayWorld(arena, true)) {
+                plugin.getLogger().warning("Could not unload " + arena.getWorldName() + " to save template.");
+                restoreEvicted(getOrCreateWorld(arena), evicted);
+                complete(done, false);
+                return;
+            }
+            plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
+                boolean copied = copyPlayToTemplate(arena);
+                plugin.getServer().getScheduler().runTask(plugin, () -> {
+                    World loaded = getOrCreateWorld(arena);
+                    restoreEvicted(loaded, evicted);
+                    complete(done, copied && loaded != null);
+                });
+            });
+        }, 1L);
+    }
+
+    /**
+     * Unloads the used play world without saving, deletes it, and copies the
+     * template folder back so the next match starts from the original generation.
+     */
+    public void restoreFromTemplate(Arena arena, Consumer<Boolean> done) {
+        if (!hasTemplate(arena)) {
+            complete(done, false);
+            return;
+        }
+        World world = arena.getWorld();
+        List<EvictedPlayer> evicted = world != null ? evictPlayers(world) : List.of();
+        Runnable copyAndLoad = () -> plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
+            boolean copied = copyTemplateToPlay(arena);
+            plugin.getServer().getScheduler().runTask(plugin, () -> {
+                World loaded = getOrCreateWorld(arena);
+                restoreEvicted(loaded, evicted);
+                complete(done, copied && loaded != null);
+            });
+        });
+        if (world == null) {
+            copyAndLoad.run();
+            return;
+        }
+        plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
+            if (!unloadPlayWorld(arena, false)) {
+                plugin.getLogger().warning("Could not unload " + arena.getWorldName() + " to restore template.");
+                restoreEvicted(arena.getWorld(), evicted);
+                complete(done, false);
+                return;
+            }
+            copyAndLoad.run();
+        }, 1L);
+    }
+
+    private boolean copyPlayToTemplate(Arena arena) {
+        File play = getPlayWorldFolder(arena);
+        File template = getTemplateWorldFolder(arena);
+        try {
+            ArenaWorldCopy.deleteRecursively(template);
+            ArenaWorldCopy.copyDirectory(play, template);
+            plugin.getLogger().info("Saved arena template for " + arena.getName() + ".");
+            return true;
+        } catch (IOException e) {
+            plugin.getLogger().log(Level.SEVERE, "Failed to save arena template for " + arena.getName(), e);
+            return false;
+        }
+    }
+
+    private boolean copyTemplateToPlay(Arena arena) {
+        File play = getPlayWorldFolder(arena);
+        File template = getTemplateWorldFolder(arena);
+        File discarded = new File(play.getParentFile(), play.getName() + "_discarding");
+        try {
+            ArenaWorldCopy.deleteRecursively(discarded);
+            if (play.exists() && !play.renameTo(discarded)) {
+                ArenaWorldCopy.deleteRecursively(play);
+            }
+            ArenaWorldCopy.copyDirectory(template, play);
+            ArenaWorldCopy.deleteRecursively(discarded);
+            plugin.getLogger().info("Restored arena " + arena.getName() + " from template.");
+            return true;
+        } catch (IOException e) {
+            plugin.getLogger().log(Level.SEVERE, "Failed to restore arena from template for " + arena.getName(), e);
+            return false;
+        }
+    }
+
+    private boolean unloadPlayWorld(Arena arena, boolean save) {
+        World world = arena.getWorld();
+        if (world == null) {
+            return true;
+        }
+        evictPlayers(world);
+        return Bukkit.unloadWorld(world, save);
+    }
+
+    private List<EvictedPlayer> evictPlayers(World world) {
+        List<EvictedPlayer> evicted = new ArrayList<>();
+        if (world == null) {
+            return evicted;
+        }
+        World fallback = fallbackWorld(world);
+        Location dest = fallback != null ? fallback.getSpawnLocation() : null;
+        for (Player player : List.copyOf(world.getPlayers())) {
+            evicted.add(new EvictedPlayer(
+                    player.getUniqueId(),
+                    player.getLocation().getX(),
+                    player.getLocation().getY(),
+                    player.getLocation().getZ(),
+                    player.getLocation().getYaw(),
+                    player.getLocation().getPitch()
+            ));
+            if (dest != null) {
+                player.teleport(dest);
+            }
+        }
+        return evicted;
+    }
+
+    private void restoreEvicted(World world, List<EvictedPlayer> evicted) {
+        if (world == null || evicted == null || evicted.isEmpty()) {
+            return;
+        }
+        for (EvictedPlayer evictedPlayer : evicted) {
+            Player player = Bukkit.getPlayer(evictedPlayer.uuid());
+            if (player == null || !player.isOnline()) {
+                continue;
+            }
+            player.teleport(new Location(
+                    world,
+                    evictedPlayer.x(),
+                    evictedPlayer.y(),
+                    evictedPlayer.z(),
+                    evictedPlayer.yaw(),
+                    evictedPlayer.pitch()
+            ));
+        }
+    }
+
+    private World fallbackWorld(World exclude) {
+        for (World world : Bukkit.getWorlds()) {
+            if (!world.equals(exclude)) {
+                return world;
+            }
+        }
+        return null;
+    }
+
+    private void complete(Consumer<Boolean> done, boolean success) {
+        if (done != null) {
+            done.accept(success);
+        }
+    }
+
+    private record EvictedPlayer(UUID uuid, double x, double y, double z, float yaw, float pitch) {
     }
 }

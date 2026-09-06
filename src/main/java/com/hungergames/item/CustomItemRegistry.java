@@ -131,6 +131,10 @@ public class CustomItemRegistry {
         return Optional.ofNullable(definitions.get(id.toLowerCase()));
     }
 
+    public boolean isRegistered(String id) {
+        return id != null && definitions.containsKey(id.toLowerCase());
+    }
+
     public Optional<ItemStack> createItem(String id) {
         return getDefinition(id).map(this::buildItem);
     }

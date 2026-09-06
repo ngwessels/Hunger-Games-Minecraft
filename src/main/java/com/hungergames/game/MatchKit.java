@@ -47,4 +47,10 @@ public final class MatchKit {
         player.setSaturation(20f);
         player.setExhaustion(0f);
     }
+
+    /** Clears flags left after a match (comet finale used invulnerability). */
+    public static void clearPostMatchFlags(Player player) {
+        player.setInvulnerable(false);
+        player.setNoDamageTicks(0);
+    }
 }

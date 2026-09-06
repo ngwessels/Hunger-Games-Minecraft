@@ -1,7 +1,7 @@
 id: volcano
 displayName: "Volcano"
 difficulty: HARD
-description: "A lava caldera awakens — the volcano grows and erupts as the match goes on."
+description: "A forest around a lava caldera — the volcano grows and the woods turn to nether. Outer ice ring melts into tsunami and lava."
 minPlayers: 1
 maxPlayers: 24
 gracePeriodSeconds: 30
@@ -9,6 +9,7 @@ maxMatchSeconds: 1200
 lootTier: hard
 lootBoxDensity: high
 initialTerrain: volcano
+arenaRadius: 400
 treePlacement:
   enabled: true
   cellSize: 5
@@ -24,6 +25,101 @@ treePlacement:
     - oak
     - spruce
     - birch
+# Outer frozen ring beyond the forest. Inner forestRadius stays the original volcano woods.
+arctic:
+  enabled: true
+  forestRadius: 300
+  blendWidth: 12
+  polarBearCount: 8
+  glacierCount: 6
+  polarBearAggroRange: 28
+# Sky comet that closes in over the match and wipes the map at the end.
+comet:
+  enabled: true
+  startHeight: 260
+  startOffsetX: 340
+  startOffsetZ: 220
+  impactHeight: 32
+  startScale: 3.0
+  endScale: 16.0
+  viewRange: 28
+  diveTicks: 50
+  obliterateColumnsPerTick: 1800
+  gravityEnabled: true
+  gravityMaxZones: 3
+  gravityMinRadius: 16
+  gravityMaxRadius: 42
+  gravityMinDurationSeconds: 8
+  gravityMaxDurationSeconds: 18
+  gravitySpawnChancePerSecond: 0.22
+# Large jungle grove with a connected treehouse, only generated when the
+# arena radius is at least jungleGrove.minRadius.
+jungleGrove:
+  enabled: true
+  minRadius: 100
+  groveRadius: 20
+  # Grove center sits this fraction of the arena radius from arena center,
+  # keeping it clear of the spawn ring (0.8 * radius) and caldera.
+  centerOffsetFactor: 0.52
+  megaTreeCount: 7
+  minTrunkHeight: 14
+  maxTrunkHeight: 26
+  treehouseAnchors: 4
+# Shallow ponds and occasional small lakes in the forest. Count scales with
+# arena radius. Kept off the caldera, spawn ring, grove, and settlements.
+ponds:
+  enabled: true
+  pondsPer100Radius: 4.0
+  lakesPer100Radius: 0.8
+  pondMinRadius: 3
+  pondMaxRadius: 6
+  lakeMinRadius: 8
+  lakeMaxRadius: 13
+  pondDepth: 2
+  lakeDepth: 3
+  minSeparation: 14
+  calderaMargin: 10
+  spawnRingMargin: 8
+  wallMargin: 8
+  maxSlope: 3
+# Pillager outposts, a village, and ruins on large maps. Building count
+# scales with arena radius; villagers spawn at grace, garrison after forest.
+settlements:
+  enabled: true
+  minRadius: 100
+  outpostsPer100Radius: 1
+  villagesPer100Radius: 1
+  ruinsBaseCount: 3
+  ruinsPer100Radius: 2
+  garrisonSize: 4
+  garrisonRespawnSeconds: 45
+  villagerCount: 5
+  chestLootTierFallback: hard
+  # PvP in or into a village church (including arrows shot from outside)
+  # condemns the aggressor. Curses stack by offense: tier 1, then 2, 3, 4.
+  condemnationEnabled: true
+# Village (iron golem) and creeper rage systems. Villager hits summon charged
+# guardians while the attacker stays near a village; creeper hits start a
+# timed charged-creeper bombardment ending in one synchronized blast.
+rage:
+  golemRageEnabled: true
+  golemRageCount: 4
+  golemRageHealthBonus: 20.0
+  golemRageDamageBonus: 5.0
+  golemRageSpeedBonus: 0.3
+  # Hunt persists while the victim is within this range of any village site
+  golemRageVillageRadius: 32
+  creeperRageEnabled: true
+  creeperAmbientMax: 6
+  # Per-second spawn chance (manager ticks at 1 Hz), checked per missing creeper slot
+  creeperAmbientSpawnChancePerTick: 0.5
+  creeperAmbientRadiusMin: 12
+  creeperAmbientRadiusMax: 45
+  creeperRageDurationSeconds: 10
+  creeperRageSpawnIntervalTicks: 20
+  creeperRagePerWave: 2
+  # Fuse on rage-spawned creepers so victims get a beat to react between waves
+  creeperFuseTicks: 25
 terrainPhases:
   - type: FOREST
     durationSeconds: 60
@@ -41,6 +137,41 @@ terrainPhases:
     radiusGrowthPerSecond: 0.28
     coneGrowthSpeedMultiplier: 1.6
     buildBlocksPerTick: 24
+    # Forest floor, water, and trees convert to nether as the volcano grows.
+    # Radius scale 1.0 = the whole arena is nether by the end of the match.
+    netherSpreadEnabled: 1
+    netherSpreadRadiusScale: 1.0
+    netherSpreadColumnsPerTick: 48
+    netherSpreadBudgetRadiusScale: 0.04
+    netherSpreadScanDepth: 8
+    netherSpreadScanHeightAbove: 40
+    arcticMeltLagBlocks: 10
+    arcticTsunamiInlandBlocks: 16
+    arcticTsunamiDurationTicks: 40
+    arcticTsunamiMinHeight: 2
+    arcticTsunamiMaxHeight: 10
+    arcticCalvingFallingIce: 5
+    # Floating glowstone blobs in converted nether, like nether-cavern veins
+    glowstoneClumpsEnabled: 1
+    glowstoneClumpCellSize: 12
+    glowstoneClumpChance: 0.34
+    glowstoneClumpMinHover: 6
+    glowstoneClumpMaxHover: 15
+    glowstoneClumpMinRadius: 2
+    glowstoneClumpMaxRadius: 4
+    # Floating netherrack islands high above converted nether, same cell logic as glowstone
+    netherIslandsEnabled: 1
+    netherIslandCellSize: 20
+    netherIslandChance: 0.28
+    netherIslandMinHover: 28
+    netherIslandMaxHover: 52
+    netherIslandMinRadius: 4
+    netherIslandMaxRadius: 8
+    netherIslandMinThickness: 2
+    netherIslandMaxThickness: 4
+    # Overworld hostiles (zombies, skeletons, spiders) in remaining forest
+    maxForestMobs: 6
+    forestMobSpawnChancePerTick: 0.04
     # Hot netherrack ignites adjacent logs/leaves as the cone expands
     hotNetherrackIgniteMargin: 8
     hotNetherrackIgniteHeightAbovePeak: 24
@@ -52,8 +183,6 @@ terrainPhases:
     arenaFireDecayChancePerTick: 0.20
     arenaFireDecayChecksPerTick: 500
     lavaStartDelaySeconds: 0
-    # Lava placed on the inner cone face per tick so caldera lava runs down the volcano
-    lavaConeSpillPerTick: 8
     # Trenches erupt from the volcano base and carve outward across the arena
     lavaTrenchMax: 10
     lavaTrenchSpawnOffsetMin: 1
@@ -68,19 +197,21 @@ terrainPhases:
     undergroundDigLavaFloodBudget: 48
     # 0 = auto-scale active lava sources with match progress
     maxActiveLavaSources: 0
-    tntSpeedMin: 0.4
-    tntSpeedMax: 1.8
-    tntUpMin: 0.6
-    tntUpMax: 2.0
-    tntDistancePerLayer: 0.04
-    tntMaxSpeed: 3.5
-    tntFuseMinTicks: 70
-    tntFuseMaxTicks: 160
+    # Aimed TNT barrage from the vent across the arena (not a weak random toss).
+    # Rate ramps with match / cone height. Fuse is travel time to the landing spot.
+    tntFuseMinTicks: 35
+    tntFuseMaxTicks: 80
     maxHostileMobs: 6
     mobSpawnMinIntensity: 0.35
     mobSpawnChancePerTick: 0.05
     mobSpawnRadiusMin: 10
     mobSpawnRadiusMax: 35
+    # Per-mob relative spawn weights (default 1.0); 0 disables a mob entirely
+    BLAZE_spawnWeight: 1.0
+    MAGMA_CUBE_spawnWeight: 0.4
+    WITHER_SKELETON_spawnWeight: 1.0
+    PIGLIN_BRUTE_spawnWeight: 1.0
+    HOGLIN_spawnWeight: 1.0
     maxGhasts: 4
     ghastMinConeLayers: 8
     ghastMinIntensity: 0.3
@@ -89,9 +220,11 @@ terrainPhases:
     ghastSpawnRadiusMax: 40
     ghastMinHeightAboveVent: 5
     ghastMaxHeightAboveVent: 16
-    projectileIntervalMin: 4
-    projectileIntervalMax: 0.6
-    projectileMaxPerBurst: 4
+    # TNT/sec from eruption start to end-game. Each shot is aimed at a random
+    # forest cell so blasts land throughout the map instead of in the lava cone.
+    projectileRatePerSecondMin: 8
+    projectileRatePerSecondMax: 22
+    projectileMaxPerTick: 8
     # Tornados can start appearing this far into the match, then recur randomly
     fireTornadoStartMatchRatio: 0.35
     fireTornadoMaxActive: 2
@@ -123,6 +256,12 @@ terrainPhases:
     volcanoGuardianScale: 1.75
     volcanoGuardianInvulnerable: 1
     volcanoGuardianAltitudeAbovePeak: 15
+    # When the guardian roams away from the vent, its altitude blends from
+    # caldera height down to (ground level + this) over the blend radius.
+    volcanoGuardianAwayAltitudeAboveGround: 12
+    # Horizontal distance (blocks) from the volcano center where the away
+    # altitude is fully reached; closer than this it stays near caldera height.
+    volcanoGuardianAwayBlendRadius: 90
     volcanoGuardianPatrolRadiusMin: 28
     volcanoGuardianPatrolRadiusMax: 52
     volcanoGuardianPatrolSpeed: 0.28
@@ -133,6 +272,8 @@ terrainPhases:
     volcanoGuardianBreathDamage: 5.0
     volcanoGuardianBreathRadius: 4.0
     volcanoGuardianBreathIntervalSeconds: 6
+    # Max distance the guardian can be from its target to breathe on it
+    volcanoGuardianBreathMaxRange: 24.0
     volcanoGuardianSwoopDamage: 10.0
     volcanoGuardianSwoopCooldownSeconds: 14
     volcanoGuardianSwoopSpeedMultiplier: 1.85
@@ -141,3 +282,37 @@ terrainPhases:
     volcanoGuardianContactIntervalTicks: 10
     volcanoGuardianSuppressGhasts: 1
     volcanoGuardianMaxGhastsAfterSpawn: 1
+    # Zombified piglin horde: ambient spawns once the eruption starts; attacking one
+    # starts a timed rage locked to that attacker. Hunt units never agro anyone else.
+    piglinHordeEnabled: true
+    # Seconds after the eruption phase starts before piglins begin appearing
+    piglinStartDelaySeconds: 15
+    piglinHordeMaxAmbient: 8
+    piglinAmbientSpawnChancePerTick: 0.02
+    piglinSpawnRadiusMin: 12
+    piglinSpawnRadiusMax: 45
+    # Rage lasts this long, then the hunt despawns even if the player is still alive
+    piglinRageDurationSeconds: 90
+    # Swarm spawned immediately when a player attacks a piglin
+    piglinSwarmSizePerAttack: 6
+    # Cap on buffed pursuers kept alive around each hunted victim
+    piglinSwarmMaxPerVictim: 14
+    # Reinforcements dropped near the victim per tick while the hunt is on
+    piglinSwarmReinforcePerTick: 1
+    # Buffs applied to swarm piglins (claimed pack + spawned hunters)
+    piglinSwarmHealthBonus: 10.0
+    piglinSwarmDamageBonus: 4.0
+    # Movement-speed multiplier on top of Speed II; high enough to outrun a sprint
+    piglinSwarmSpeedBonus: 0.55
+    # Speed potion amplifier (0 = Speed I, 1 = Speed II)
+    piglinSwarmSpeedAmplifier: 1
+    # Follow range so hunters do not lose the victim mid-rage
+    piglinAggroRangeDuringSwarm: 96
+    # Fraction of spawned piglins that carry crossbows (shoot pillaring players)
+    piglinRangerShare: 0.35
+    piglinRangerFireIntervalTicks: 40
+    piglinRangerArrowSpeed: 1.6
+    # Share of rage-swarm spawns for the heavier units (remainder are zombified piglins)
+    piglinBruteShare: 0.15
+    piglinHoglinShare: 0.15
+    piglinWitherSkeletonShare: 0.15

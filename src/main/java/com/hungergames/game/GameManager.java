@@ -16,6 +16,7 @@ import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.entity.Firework;
 import org.bukkit.entity.Player;
+import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.FireworkMeta;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.scheduler.BukkitTask;
@@ -34,6 +35,7 @@ public class GameManager {
     private final Map<String, Game> gamesByArena = new HashMap<>();
     private final Map<UUID, String> playerArena = new HashMap<>();
     private final Map<UUID, SavedPlayerState> pendingRestores = new HashMap<>();
+    private final LocatorBarManager locatorBarManager = new LocatorBarManager();
     private BukkitTask tickTask;
 
     public GameManager(HungerGamesPlugin plugin) {
@@ -76,7 +78,41 @@ public class GameManager {
     }
 
     public Optional<Game> getPlayerGame(Player player) {
-        return findGameForPlayer(player.getUniqueId());
+        Optional<Game> game = findGameForPlayer(player.getUniqueId());
+        if (game.isEmpty()) {
+            return game;
+        }
+        PlayerSession session = game.get().getSession(player.getUniqueId());
+        if (session != null && session.isDisconnected()) {
+            return Optional.empty();
+        }
+        return game;
+    }
+
+    public enum RejoinResult {
+        SUCCESS,
+        SUCCESS_SPECTATOR,
+        NOT_ELIGIBLE,
+        ALREADY_IN,
+        MATCH_ENDED
+    }
+
+    /**
+     * Strips leftover comet invulnerability and gravity modifiers from a player
+     * who is not in a live match. Returns false if they are still in a match.
+     */
+    public boolean clearLeftoverMatchFlags(Player player) {
+        Optional<Game> game = getPlayerGame(player);
+        if (game.isPresent()) {
+            GameState state = game.get().getState();
+            if (state == GameState.COUNTDOWN || state == GameState.GRACE
+                    || state == GameState.ACTIVE || state == GameState.ENDING) {
+                return false;
+            }
+        }
+        MatchKit.clearPostMatchFlags(player);
+        plugin.getVolcanoComet().clearPlayerGravity(player);
+        return true;
     }
 
     private Optional<Game> findGameForPlayer(UUID uuid) {
@@ -104,6 +140,9 @@ public class GameManager {
         Game existing = gamesByArena.get(arenaKey);
         if (existing != null && existing.isParticipant(player.getUniqueId()) && !existing.allowsJoin()) {
             PlayerSession staleSession = existing.getSession(player.getUniqueId());
+            if (staleSession != null && staleSession.isDisconnected()) {
+                return null;
+            }
             if (staleSession != null) {
                 releasePlayerFromArena(existing, staleSession);
             }
@@ -164,14 +203,211 @@ public class GameManager {
         PlayerSession.applySavedState(player, pending);
     }
 
+    public boolean hasRejoinableSession(Player player) {
+        return findRejoinSession(player).isPresent();
+    }
+
+    public void notifyRejoinOpportunity(Player player) {
+        Optional<Game> gameOpt = findGameForPlayer(player.getUniqueId());
+        if (gameOpt.isEmpty()) {
+            return;
+        }
+        Game game = gameOpt.get();
+        PlayerSession session = game.getSession(player.getUniqueId());
+        if (session == null || !session.isDisconnected()) {
+            return;
+        }
+        GameState state = game.getState();
+        if (state != GameState.COUNTDOWN && state != GameState.GRACE && state != GameState.ACTIVE) {
+            return;
+        }
+        expireDisconnectedIfNeeded(game, session);
+        session.rebindPlayer(player);
+        if (session.isAlive() && !session.isSpectator()) {
+            int remaining = getRejoinSecondsRemaining(session);
+            String window = remaining < 0
+                    ? "the match ends"
+                    : remaining + "s";
+            player.sendMessage(plugin.formatMessage(
+                    "&eYou disconnected from a match. Use &f/hg rejoin &ewithin &f"
+                            + window + " &eto return."));
+        } else {
+            player.sendMessage(plugin.formatMessage(
+                    "&7You can still watch — use &f/hg rejoin &7to spectate."));
+        }
+    }
+
+    public RejoinResult rejoinGame(Player player) {
+        Optional<Game> mapped = findGameForPlayer(player.getUniqueId());
+        if (mapped.isEmpty()) {
+            return RejoinResult.NOT_ELIGIBLE;
+        }
+        Game game = mapped.get();
+        PlayerSession session = game.getSession(player.getUniqueId());
+        if (session == null) {
+            return RejoinResult.NOT_ELIGIBLE;
+        }
+        if (!session.isDisconnected()) {
+            return RejoinResult.ALREADY_IN;
+        }
+        GameState state = game.getState();
+        if (state != GameState.COUNTDOWN && state != GameState.GRACE && state != GameState.ACTIVE) {
+            return RejoinResult.MATCH_ENDED;
+        }
+
+        expireDisconnectedIfNeeded(game, session);
+        session.rebindPlayer(player);
+        playerArena.put(player.getUniqueId(), game.getArena().getName().toLowerCase());
+        session.clearDisconnected();
+        session.savePlayerState();
+
+        boolean asSpectator = !session.isAlive() || session.isSpectator();
+        if (asSpectator) {
+            session.setAlive(false);
+            session.setSpectator(true);
+            respawnPlayerAsSpectator(game, player);
+            plugin.getGameHudManager().update(game);
+            broadcast(game, "&e" + player.getName() + " &7rejoined as a spectator.");
+            return RejoinResult.SUCCESS_SPECTATOR;
+        }
+
+        restoreTributeOnRejoin(game, player, session);
+        plugin.getGameHudManager().update(game);
+        broadcast(game, "&a" + player.getName() + " &7rejoined the match!");
+        return RejoinResult.SUCCESS;
+    }
+
+    public void handlePlayerQuit(Player player) {
+        findGameForPlayer(player.getUniqueId()).ifPresent(game -> {
+            PlayerSession session = game.getSession(player.getUniqueId());
+            if (session != null && session.isDisconnected()) {
+                return;
+            }
+            GameState state = game.getState();
+            if (state == GameState.COUNTDOWN || state == GameState.GRACE || state == GameState.ACTIVE) {
+                handleDisconnect(game, player);
+                return;
+            }
+            leaveGame(player);
+        });
+    }
+
+    private void handleDisconnect(Game game, Player player) {
+        PlayerSession session = game.getSession(player.getUniqueId());
+        if (session == null || session.isDisconnected()) {
+            return;
+        }
+        if (game.getState() == GameState.GRACE || game.getState() == GameState.ACTIVE) {
+            session.captureMatchSnapshot();
+        }
+        if (session.hasSavedState()) {
+            stashPendingRestore(session);
+        }
+        plugin.getCurseManager().releaseBeastForm(player);
+        plugin.getGameHudManager().clearHudForPlayer(player, game);
+        session.markDisconnected();
+        int remaining = getRejoinSecondsRemaining(session);
+        String window = remaining < 0 ? "until the match ends" : remaining + "s";
+        broadcast(game, "&e" + player.getName() + " &7disconnected. They can &f/hg rejoin &7for &f"
+                + window + "&7.");
+    }
+
+    private Optional<PlayerSession> findRejoinSession(Player player) {
+        return findGameForPlayer(player.getUniqueId())
+                .map(game -> game.getSession(player.getUniqueId()))
+                .filter(session -> session != null && session.isDisconnected())
+                .filter(session -> {
+                    Game game = findGameForPlayer(player.getUniqueId()).orElse(null);
+                    if (game == null) {
+                        return false;
+                    }
+                    GameState state = game.getState();
+                    return state == GameState.COUNTDOWN || state == GameState.GRACE || state == GameState.ACTIVE;
+                });
+    }
+
+    private int getRejoinSecondsRemaining(PlayerSession session) {
+        int timeout = plugin.getPluginConfig().getRejoinTimeoutSeconds();
+        if (timeout <= 0) {
+            return -1;
+        }
+        long elapsed = (System.currentTimeMillis() - session.getDisconnectedAtMillis()) / 1000L;
+        return (int) Math.max(0, timeout - elapsed);
+    }
+
+    private void restoreTributeOnRejoin(Game game, Player player, PlayerSession session) {
+        GameState state = game.getState();
+        if (session.applyMatchSnapshot(player)) {
+            plugin.getCustomItemListener().updatePassives(player);
+            plugin.getCurseManager().reapplyOnRespawn(session);
+            session.applyMatchVitals(player);
+            player.setAllowFlight(false);
+            player.setFlying(false);
+            player.setInvisible(false);
+            MatchKit.clearPostMatchFlags(player);
+            if (session.isInRespawnGrace()) {
+                player.setGlowing(true);
+            }
+            return;
+        }
+        if (state == GameState.GRACE || state == GameState.ACTIVE) {
+            equipPlayerForMatch(game, player);
+            plugin.getCurseManager().reapplyOnRespawn(session);
+            return;
+        }
+        player.getInventory().clear();
+        player.getInventory().setArmorContents(new ItemStack[4]);
+        player.getInventory().setItemInOffHand(null);
+    }
+
+    private void tickDisconnectedPlayers(Game game) {
+        for (PlayerSession session : List.copyOf(game.getSessions().values())) {
+            expireDisconnectedIfNeeded(game, session);
+        }
+    }
+
+    private void expireDisconnectedIfNeeded(Game game, PlayerSession session) {
+        if (!session.isDisconnected() || !session.isAlive() || session.isSpectator()) {
+            return;
+        }
+        int remaining = getRejoinSecondsRemaining(session);
+        if (remaining != 0) {
+            return;
+        }
+        session.setAlive(false);
+        session.setSpectator(true);
+        session.clearMatchSnapshot();
+        broadcast(game, "&c" + session.getPlayerName() + " &7failed to rejoin and is out of the match!");
+        Player online = Bukkit.getPlayer(session.getPlayerId());
+        if (online != null && online.isOnline()) {
+            online.sendMessage(plugin.formatMessage(
+                    "&cYour rejoin window expired. Use &f/hg rejoin &cto spectate."));
+        }
+        checkWinCondition(game);
+    }
+
     private void releasePlayerFromArena(Game game, PlayerSession session) {
-        UUID uuid = session.getPlayer().getUniqueId();
+        UUID uuid = session.getPlayerId();
         Player online = Bukkit.getPlayer(uuid);
 
+        plugin.getCurseManager().clearPlayer(session);
         restoreTempRespawnPlatform(game, session);
         clearRespawnGrace(game, online != null ? online : session.getPlayer(), session);
 
+        if (session.isDisconnected()) {
+            if (online != null && online.isOnline()) {
+                MatchKit.clearPostMatchFlags(online);
+                plugin.getVolcanoComet().clearPlayerGravity(online);
+                plugin.getGameHudManager().clearHudForPlayer(online, game);
+            } else if (session.hasSavedState()) {
+                stashPendingRestore(session);
+            }
+            return;
+        }
+
         if (online != null && online.isOnline()) {
+            MatchKit.clearPostMatchFlags(online);
+            plugin.getVolcanoComet().clearPlayerGravity(online);
             plugin.getGameHudManager().clearHudForPlayer(online, game);
             plugin.getCustomItemRegistry().stripFromPlayers(List.of(online));
             if (!session.restorePlayerState() && session.hasSavedState()) {
@@ -201,6 +437,10 @@ public class GameManager {
             gamesByArena.put(arenaName.toLowerCase(), game);
         }
 
+        if (plugin.getArenaManager().getOrCreateWorld(game.getArena()) == null) {
+            return false;
+        }
+
         if (game.getState() != GameState.LOBBY) {
             return false;
         }
@@ -224,6 +464,10 @@ public class GameManager {
             GameMode mode = plugin.getGameModeRegistry().getModeOrDefault(arena.getGameModeId());
             game = new Game(arena, mode);
             gamesByArena.put(arenaName.toLowerCase(), game);
+        }
+
+        if (plugin.getArenaManager().getOrCreateWorld(game.getArena()) == null) {
+            return false;
         }
 
         if (game.getState() != GameState.LOBBY) {
@@ -341,6 +585,7 @@ public class GameManager {
             world.getWorldBorder().setSize(arena.getRadius() * 2.0);
             world.getWorldBorder().setDamageAmount(0);
         }
+        plugin.getVolcanoComet().destroy();
         plugin.getBlockMutationQueue().clear();
     }
 
@@ -360,6 +605,7 @@ public class GameManager {
     }
 
     private void tickCountdown(Game game) {
+        tickDisconnectedPlayers(game);
         game.setCountdownRemaining(game.getCountdownRemaining() - 1);
         if (game.getCountdownRemaining() <= 0) {
             beginGrace(game);
@@ -372,14 +618,27 @@ public class GameManager {
         game.setState(GameState.GRACE);
         game.setMatchStartMillis(System.currentTimeMillis());
         game.setGraceRemaining(game.getGameMode().getGracePeriodSeconds());
+        locatorBarManager.suppress(game.getArena().getWorld());
         if (game.isSimulationMode()) {
             enrollSimulationObserver(game);
         }
+        World world = game.getArena().getWorld();
+        ArenaEntityUtil.suppressVanillaMonsterSpawning(world);
+        ArenaEntityUtil.clearUntaggedHostiles(world, game.getArena());
         teleportToSpawns(game);
-        if (game.isSimulationMode()) {
-            spawnSimulationTestTarget(game);
-        }
         plugin.getLootBoxManager().prepareMatchLoot(game);
+        plugin.getSettlementManager().onGraceStart(game);
+        plugin.getArcticManager().onGraceStart(game);
+        plugin.getVolcanoComet().start(game);
+        plugin.getServer().getScheduler().runTask(plugin, () -> {
+            if (game.getState() != GameState.GRACE && game.getState() != GameState.ACTIVE) {
+                return;
+            }
+            ArenaEntityUtil.clearUntaggedHostiles(game.getArena().getWorld(), game.getArena());
+            if (game.isSimulationMode()) {
+                spawnSimulationTestTarget(game);
+            }
+        });
         String lootMessage = plugin.getLootBoxManager().usesCornucopiaChests(game.getGameMode())
                 ? "&aGrace period! Loot the center and scattered chests — PvP is &cdisabled&a."
                 : "&aGrace period! Find scattered loot chests around the arena — PvP is &cdisabled&a.";
@@ -414,10 +673,15 @@ public class GameManager {
     }
 
     private void teleportToSpawns(Game game) {
-        List<Player> players = game.getAllParticipants();
-        SpawnAssignmentUtil.assignMatchSpawns(game, players);
-        for (Player player : players) {
-            equipPlayerForMatch(game, player);
+        SpawnAssignmentUtil.assignMatchSpawns(game);
+        for (PlayerSession session : game.getSessions().values()) {
+            if (session.isDisconnected()) {
+                continue;
+            }
+            Player player = session.getOnlinePlayer();
+            if (player != null) {
+                equipPlayerForMatch(game, player);
+            }
         }
     }
 
@@ -517,6 +781,7 @@ public class GameManager {
         online.setAllowFlight(false);
         online.setFlying(false);
         online.setInvisible(false);
+        MatchKit.clearPostMatchFlags(online);
         if (online.isDead()) {
             online.spigot().respawn();
         }
@@ -558,12 +823,18 @@ public class GameManager {
         online.setAllowFlight(false);
         online.setFlying(false);
         online.setInvisible(false);
+        MatchKit.clearPostMatchFlags(online);
         if (online.isDead()) {
             online.spigot().respawn();
         }
         online.teleport(spawn);
-        MatchKit.apply(online);
+        if (plugin.getCurseManager().isBeastCursed(session)) {
+            plugin.getCurseManager().stripBeastInventory(online);
+        } else {
+            MatchKit.apply(online);
+        }
         MatchKit.restoreVitals(online);
+        plugin.getCurseManager().reapplyOnRespawn(session);
         online.setFireTicks(0);
         online.setNoDamageTicks(Math.max(online.getNoDamageTicks(), 40));
         session.clearCachedRespawnLocation();
@@ -627,7 +898,9 @@ public class GameManager {
     }
 
     private void tickGrace(Game game) {
+        tickDisconnectedPlayers(game);
         tickRespawnGrace(game);
+        plugin.getArcticManager().tick(game);
         game.setGraceRemaining(game.getGraceRemaining() - 1);
         if (game.getGraceRemaining() <= 0) {
             beginActive(game);
@@ -645,9 +918,14 @@ public class GameManager {
     }
 
     private void tickActive(Game game) {
+        tickDisconnectedPlayers(game);
         tickRespawnGrace(game);
         plugin.getTerrainPhaseManager().tick(game);
         plugin.getPowerUpManager().tick(game);
+        plugin.getSettlementManager().tick(game);
+        plugin.getArcticManager().tick(game);
+        plugin.getCurseManager().tick(game);
+        plugin.getRageManager().tick(game);
         checkMatchTimeLimit(game);
         checkWinCondition(game);
     }
@@ -660,15 +938,15 @@ public class GameManager {
             return;
         }
 
-        List<Player> alive = game.getAlivePlayers();
-        if (!game.isSimulationMode() && alive.size() == 1) {
-            game.setWinnerId(alive.getFirst().getUniqueId());
+        int living = game.countLivingTributes();
+        if (!game.isSimulationMode() && living == 1) {
+            game.setWinnerId(game.getLivingTributeId());
         }
 
         broadcast(game, "&e&lTime limit reached!");
-        if (alive.size() > 1) {
-            broadcast(game, "&7" + alive.size() + " players survived — no single winner.");
-        } else if (alive.isEmpty()) {
+        if (living > 1) {
+            broadcast(game, "&7" + living + " players survived — no single winner.");
+        } else if (living == 0) {
             broadcast(game, "&7No survivors when time ran out.");
         }
         beginEnding(game);
@@ -678,14 +956,14 @@ public class GameManager {
         if (game.isSimulationMode()) {
             return;
         }
-        List<Player> alive = game.getAlivePlayers();
-        long eliminated = game.getSessions().values().stream().filter(s -> !s.isAlive()).count();
+        int living = game.countLivingTributes();
+        int eliminated = game.getSessions().size() - living;
 
-        if (alive.isEmpty()) {
+        if (living == 0) {
             beginEnding(game);
         } else if (plugin.getPluginConfig().isEndOnLastSurvivor()
-                && alive.size() == 1 && eliminated > 0) {
-            game.setWinnerId(alive.getFirst().getUniqueId());
+                && living == 1 && eliminated > 0) {
+            game.setWinnerId(game.getLivingTributeId());
             beginEnding(game);
         }
     }
@@ -730,6 +1008,7 @@ public class GameManager {
         session.setAlive(false);
         session.setSpectator(true);
         clearRespawnGrace(game, player, session);
+        plugin.getCurseManager().releaseBeastForm(player);
         broadcast(game, "&c" + player.getName() + " &7has died &f" + maxDeaths
                 + " &7times and is out of the match!");
         player.sendMessage(plugin.formatMessage(
@@ -781,6 +1060,7 @@ public class GameManager {
         session.setAlive(false);
         session.setSpectator(true);
         clearRespawnGrace(game, player, session);
+        plugin.getCurseManager().releaseBeastForm(player);
         player.setGameMode(org.bukkit.GameMode.SPECTATOR);
         player.setAllowFlight(true);
         player.setFlying(true);
@@ -790,34 +1070,62 @@ public class GameManager {
     }
 
     private void beginEnding(Game game) {
+        if (game.getState() == GameState.ENDING || game.getState() == GameState.RESET || game.isResetStarted()) {
+            return;
+        }
         game.setState(GameState.ENDING);
-        game.setCountdownRemaining(plugin.getPluginConfig().getEndingDelaySeconds());
+        plugin.getCurseManager().clear(game);
 
         if (game.getWinnerId() != null) {
-            Player winner = Bukkit.getPlayer(game.getWinnerId());
-            if (winner != null) {
-                broadcast(game, "&6&l" + winner.getName() + " &6&lwins the Hunger Games!");
+            UUID winnerId = game.getWinnerId();
+            PlayerSession winnerSession = game.getSession(winnerId);
+            String winnerName = winnerSession != null ? winnerSession.getPlayerName() : null;
+            Player winner = Bukkit.getPlayer(winnerId);
+            if (winnerName == null && winner != null) {
+                winnerName = winner.getName();
+            }
+            if (winnerName != null) {
+                broadcast(game, "&6&l" + winnerName + " &6&lwins the Hunger Games!");
+            }
+            if (winner != null && winner.isOnline()) {
                 spawnFireworks(winner.getLocation());
             }
         } else {
             broadcast(game, "&7No winner — everyone was eliminated.");
         }
+        if (plugin.getVolcanoComet().tryImpact(game, () -> {
+            broadcast(game, "&7Resetting the arena...");
+            startArenaReset(game);
+        })) {
+            return;
+        }
+        broadcast(game, "&7Resetting the arena...");
+        startArenaReset(game);
     }
 
     private void tickEnding(Game game) {
-        game.setCountdownRemaining(game.getCountdownRemaining() - 1);
-        if (game.getCountdownRemaining() <= 0) {
-            game.setState(GameState.RESET);
+        if (plugin.getVolcanoComet().isImpacting(game)) {
+            return;
         }
+        startArenaReset(game);
     }
 
     private void tickReset(Game game) {
+        startArenaReset(game);
+    }
+
+    private void startArenaReset(Game game) {
         if (game.isResetStarted()) {
             return;
         }
+        game.setState(GameState.RESET);
         game.setResetStarted(true);
         cleanupGameParticipants(game);
-        scheduleArenaTerrainReset(game);
+        if (game.getArena().isGenerated()) {
+            scheduleArenaTerrainReset(game);
+            return;
+        }
+        gamesByArena.remove(game.getArena().getName().toLowerCase());
     }
 
     private void abandonGame(Game game) {
@@ -828,18 +1136,14 @@ public class GameManager {
         if (game.isResetStarted()) {
             return;
         }
-        if (resetTerrain) {
-            game.setResetStarted(true);
+        if (resetTerrain && game.getArena().isGenerated()) {
+            startArenaReset(game);
+            return;
         }
 
         cleanupGameParticipants(game);
 
         Arena arena = game.getArena();
-        if (resetTerrain && arena.isGenerated()) {
-            scheduleArenaTerrainReset(game);
-            return;
-        }
-
         if (arena.getWorld() != null) {
             World world = arena.getWorld();
             world.getWorldBorder().setSize(arena.getRadius() * 2.0);
@@ -856,6 +1160,7 @@ public class GameManager {
     }
 
     private void cleanupGameParticipants(Game game) {
+        locatorBarManager.restore(game.getArena().getWorld());
         plugin.getGameHudManager().clearHud(game);
         restoreSimulationObserver(game);
         Arena arena = game.getArena();
@@ -866,6 +1171,9 @@ public class GameManager {
         plugin.getBlockMutationQueue().clear();
         plugin.getLootBoxManager().clearLootBoxes(game);
         plugin.getPowerUpManager().clear(game);
+        plugin.getCurseManager().clear(game);
+        plugin.getRageManager().clear(game);
+        plugin.getVolcanoComet().destroy();
 
         List<UUID> participantIds = new ArrayList<>(game.getSessions().keySet());
         for (PlayerSession session : game.getSessions().values()) {

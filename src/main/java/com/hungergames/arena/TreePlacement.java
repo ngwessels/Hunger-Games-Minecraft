@@ -89,7 +89,7 @@ public final class TreePlacement {
         }
     }
 
-    private static BlockData persistentLeaves(Material leavesMaterial) {
+    public static BlockData persistentLeaves(Material leavesMaterial) {
         BlockData data = leavesMaterial.createBlockData();
         if (data instanceof Leaves leafData) {
             leafData.setPersistent(true);

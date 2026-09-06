@@ -13,9 +13,18 @@ public final class TerrainHeightmap {
     public static int[][] generate(double centerX, double centerZ, int radius,
                                     int minX, int maxX, int minZ, int maxZ,
                                     int baseY, int seed, String terrain) {
+        return generate(centerX, centerZ, radius, minX, maxX, minZ, maxZ, baseY, seed, terrain, radius, 0);
+    }
+
+    public static int[][] generate(double centerX, double centerZ, int radius,
+                                    int minX, int maxX, int minZ, int maxZ,
+                                    int baseY, int seed, String terrain,
+                                    int forestRadius, int blendWidth) {
         int width = maxX - minX + 1;
         int depth = maxZ - minZ + 1;
         int[][] heights = new int[width][depth];
+        int hillRadius = Math.max(20, Math.min(radius, forestRadius));
+        int blend = Math.max(0, blendWidth);
 
         boolean volcano = "volcano".equalsIgnoreCase(terrain);
         double scale = volcano ? 0.0 : 28.0;
@@ -31,7 +40,8 @@ public final class TerrainHeightmap {
                 }
 
                 if (volcano) {
-                    heights[xi][zi] = sampleVolcanoHeight(x, z, centerX, centerZ, radius, baseY, seed);
+                    heights[xi][zi] = sampleVolcanoColumn(x, z, centerX, centerZ, hillRadius,
+                            radius, blend, baseY, seed);
                 } else {
                     int sx = (int) Math.floor(x / scale);
                     int sz = (int) Math.floor(z / scale);
@@ -57,6 +67,23 @@ public final class TerrainHeightmap {
             }
         }
         return heights;
+    }
+
+    private static int sampleVolcanoColumn(int x, int z, double centerX, double centerZ,
+                                           int forestRadius, int arenaRadius, int blendWidth,
+                                           int baseY, int seed) {
+        double dist = CircleUtil.distanceFromCenter(centerX, centerZ, x, z);
+        int forestH = sampleVolcanoHeight(x, z, centerX, centerZ, forestRadius, baseY, seed);
+        if (dist <= forestRadius - blendWidth || arenaRadius <= forestRadius) {
+            return forestH;
+        }
+        double arcticN = NoiseUtil.continuousFractalNoise2D(x * 0.05, z * 0.05, seed + 907, 2);
+        int arcticH = baseY + (int) Math.round(arcticN * 0.4);
+        if (dist >= forestRadius) {
+            return arcticH;
+        }
+        double t = (dist - (forestRadius - blendWidth)) / Math.max(1, blendWidth);
+        return (int) Math.round(forestH * (1.0 - t) + arcticH * t);
     }
 
     private static int sampleVolcanoHeight(int x, int z, double centerX, double centerZ,

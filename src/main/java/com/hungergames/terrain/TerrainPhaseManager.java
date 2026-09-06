@@ -3,12 +3,14 @@ package com.hungergames.terrain;
 import com.hungergames.HungerGamesPlugin;
 import com.hungergames.arena.Arena;
 import com.hungergames.game.Game;
+import com.hungergames.game.GameState;
 import com.hungergames.gamemode.GameMode;
 import com.hungergames.gamemode.TerrainPhaseConfig;
 import com.hungergames.terrain.phases.TerrainPhaseFactory;
 import com.hungergames.terrain.phases.VolcanoEruptionPhase;
 import com.hungergames.util.ColorUtil;
 import org.bukkit.Sound;
+import org.bukkit.World;
 import org.bukkit.entity.Player;
 public class TerrainPhaseManager {
 
@@ -161,5 +163,32 @@ public class TerrainPhaseManager {
             return java.util.Optional.of(phase);
         }
         return java.util.Optional.empty();
+    }
+
+    public boolean isVolcanoNetherAt(World world, int x, int z) {
+        if (world == null) {
+            return getVolcanoEruptionPhase().map(phase -> phase.isNetherConverted(x, z)).orElse(false);
+        }
+        return getVolcanoEruptionPhase()
+                .map(phase -> phase.isNetherConvertedGround(world, x, z))
+                .orElse(false);
+    }
+
+    public boolean isVolcanoForestAt(World world, int x, int z) {
+        return !isVolcanoNetherAt(world, x, z);
+    }
+
+    /**
+     * Hostile mobs stay off during grace and the opening FOREST phase so
+     * players are not dumped into creepers, nether spawns, or garrisons.
+     */
+    public boolean allowsHostileSpawning(Game game) {
+        if (game == null || game.getState() != GameState.ACTIVE) {
+            return false;
+        }
+        if (currentConfig == null) {
+            return true;
+        }
+        return !"FOREST".equalsIgnoreCase(currentConfig.getType());
     }
 }

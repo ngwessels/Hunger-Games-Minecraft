@@ -4,6 +4,7 @@ import com.hungergames.HungerGamesPlugin;
 import com.hungergames.arena.Arena;
 import com.hungergames.arena.ArenaGenerator;
 import com.hungergames.gamemode.GameMode;
+import org.bukkit.Bukkit;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -28,6 +29,7 @@ public class HgCommand implements CommandExecutor {
             case "reload" -> handleReload(sender);
             case "arena" -> handleArena(sender, args);
             case "join" -> handleJoin(sender, args);
+            case "rejoin" -> handleRejoin(sender);
             case "leave" -> handleLeave(sender);
             case "start" -> handleStart(sender, args);
             case "simulate" -> handleSimulate(sender, args);
@@ -35,6 +37,7 @@ public class HgCommand implements CommandExecutor {
             case "loot" -> handleLoot(sender, args);
             case "powerup" -> handlePowerUp(sender, args);
             case "reset" -> handleReset(sender, args);
+            case "unstuck" -> handleUnstuck(sender, args);
             default -> {
                 sendHelp(sender);
                 yield true;
@@ -76,41 +79,15 @@ public class HgCommand implements CommandExecutor {
     }
 
     private boolean handleArenaCreate(CommandSender sender, String[] args) {
-        if (args.length < 4) {
-            sender.sendMessage(plugin.formatMessage("&cUsage: /hg arena create <name> <radius> [wallHeight]"));
+        if (args.length < 3) {
+            sender.sendMessage(plugin.formatMessage("&cUsage: /hg arena create <name>"));
             return true;
         }
         String name = args[2];
-        int radius;
-        try {
-            radius = Integer.parseInt(args[3]);
-        } catch (NumberFormatException e) {
-            sender.sendMessage(plugin.formatMessage("&cRadius must be a number."));
-            return true;
-        }
-        if (radius < 20) {
-            sender.sendMessage(plugin.formatMessage("&cMinimum radius is 20."));
-            return true;
-        }
-        int wallHeight;
-        if (args.length >= 5) {
-            try {
-                wallHeight = Integer.parseInt(args[4]);
-            } catch (NumberFormatException e) {
-                sender.sendMessage(plugin.formatMessage("&cWall height must be a number."));
-                return true;
-            }
-            if (wallHeight < 1) {
-                sender.sendMessage(plugin.formatMessage("&cMinimum wall height is 1."));
-                return true;
-            }
-        } else {
-            wallHeight = plugin.getPluginConfig().getDefaultWallHeight();
-        }
-        plugin.getArenaManager().createArena(name, radius, wallHeight);
+        plugin.getArenaManager().createArena(name);
         sender.sendMessage(plugin.formatMessage("&aArena &e" + name + " &acreated at &f0, "
                 + plugin.getPluginConfig().getBaseTerrainY() + ", 0 &awith radius &f"
-                + radius + " &aand wall height &f" + wallHeight + "&a."));
+                + Arena.RADIUS + " &aand wall height &f" + Arena.WALL_HEIGHT + "&a."));
         sender.sendMessage(plugin.formatMessage("&7Next: &f/hg arena setmode " + name + " <gamemode> &7then &f/hg arena generate " + name));
         return true;
     }
@@ -130,8 +107,13 @@ public class HgCommand implements CommandExecutor {
             return true;
         }
         arena.setGameModeId(args[3]);
+        GameMode mode = plugin.getGameModeRegistry().getMode(args[3]).orElse(null);
+        if (mode != null) {
+            arena.setRadius(mode.getArenaRadius());
+        }
         plugin.getArenaManager().save();
-        sender.sendMessage(plugin.formatMessage("&aArena &e" + arena.getName() + " &amode set to &f" + args[3] + "&a."));
+        sender.sendMessage(plugin.formatMessage("&aArena &e" + arena.getName() + " &amode set to &f" + args[3]
+                + " &a(radius &f" + arena.getRadius() + "&a)."));
         return true;
     }
 
@@ -194,6 +176,11 @@ public class HgCommand implements CommandExecutor {
             sender.sendMessage(plugin.formatMessage("&cNo permission."));
             return true;
         }
+        if (plugin.getGameManager().hasRejoinableSession(player)) {
+            sender.sendMessage(plugin.formatMessage(
+                    "&eYou already have a match in progress. Use &f/hg rejoin &eto return."));
+            return true;
+        }
 
         Arena arena;
         if (args.length >= 2) {
@@ -216,6 +203,27 @@ public class HgCommand implements CommandExecutor {
             return true;
         }
         sender.sendMessage(plugin.formatMessage("&aYou joined &e" + arena.getName() + "&a!"));
+        return true;
+    }
+
+    private boolean handleRejoin(CommandSender sender) {
+        if (!(sender instanceof Player player)) {
+            sender.sendMessage(plugin.formatMessage("&cPlayers only."));
+            return true;
+        }
+        if (!player.hasPermission("hungergames.play")) {
+            sender.sendMessage(plugin.formatMessage("&cNo permission."));
+            return true;
+        }
+        switch (plugin.getGameManager().rejoinGame(player)) {
+            case SUCCESS -> sender.sendMessage(plugin.formatMessage("&aYou rejoined the match!"));
+            case SUCCESS_SPECTATOR -> sender.sendMessage(plugin.formatMessage(
+                    "&7You rejoined as a spectator."));
+            case ALREADY_IN -> sender.sendMessage(plugin.formatMessage("&cYou're already in the match."));
+            case MATCH_ENDED -> sender.sendMessage(plugin.formatMessage("&cThat match has ended."));
+            case NOT_ELIGIBLE -> sender.sendMessage(plugin.formatMessage(
+                    "&cNo match to rejoin. Use &f/hg join &cif you want to play."));
+        }
         return true;
     }
 
@@ -317,6 +325,57 @@ public class HgCommand implements CommandExecutor {
         return true;
     }
 
+    private boolean handleUnstuck(CommandSender sender, String[] args) {
+        if (args.length < 2) {
+            if (!(sender instanceof Player player)) {
+                sender.sendMessage(plugin.formatMessage("&cUsage: /hg unstuck <player|*>"));
+                return true;
+            }
+            applyUnstuck(sender, player);
+            return true;
+        }
+        if (!requireAdmin(sender)) {
+            return true;
+        }
+        if (args[1].equals("*") || args[1].equalsIgnoreCase("all")) {
+            int cleared = 0;
+            int skipped = 0;
+            for (Player player : Bukkit.getOnlinePlayers()) {
+                if (plugin.getGameManager().clearLeftoverMatchFlags(player)) {
+                    player.sendMessage(plugin.formatMessage("&aMatch invulnerability cleared."));
+                    cleared++;
+                } else {
+                    skipped++;
+                }
+            }
+            sender.sendMessage(plugin.formatMessage("&aCleared leftover invulnerability on &f" + cleared
+                    + " &aplayer(s)." + (skipped > 0 ? " &7Skipped " + skipped + " still in a match." : "")));
+            return true;
+        }
+        Player target = Bukkit.getPlayerExact(args[1]);
+        if (target == null || !target.isOnline()) {
+            sender.sendMessage(plugin.formatMessage("&cPlayer not found."));
+            return true;
+        }
+        applyUnstuck(sender, target);
+        return true;
+    }
+
+    private void applyUnstuck(CommandSender sender, Player target) {
+        if (!plugin.getGameManager().clearLeftoverMatchFlags(target)) {
+            sender.sendMessage(plugin.formatMessage("&c" + target.getName()
+                    + " is in a live match. Wait until it ends."));
+            return;
+        }
+        if (sender.equals(target)) {
+            sender.sendMessage(plugin.formatMessage("&aMatch invulnerability cleared."));
+        } else {
+            sender.sendMessage(plugin.formatMessage("&aCleared leftover invulnerability on &f"
+                    + target.getName() + "&a."));
+            target.sendMessage(plugin.formatMessage("&aMatch invulnerability cleared."));
+        }
+    }
+
     private boolean handleReset(CommandSender sender, String[] args) {
         if (!requireAdmin(sender)) {
             return true;
@@ -339,8 +398,8 @@ public class HgCommand implements CommandExecutor {
         GameMode mode = plugin.getGameModeRegistry().getModeOrDefault(arena.getGameModeId());
         Player player = sender instanceof Player p ? p : null;
         if (player == null) {
-            sender.sendMessage(plugin.formatMessage("&7Resetting arena &e" + arena.getName()
-                    + "&7... This may take a moment."));
+            sender.sendMessage(plugin.formatMessage("&7Restoring arena &e" + arena.getName()
+                    + "&7 from saved copy..."));
         }
         new ArenaGenerator(plugin).reset(arena, mode, player, () -> {
             if (!(sender instanceof Player)) {
@@ -502,9 +561,12 @@ public class HgCommand implements CommandExecutor {
     private void sendHelp(CommandSender sender) {
         sender.sendMessage(plugin.formatMessage("&6&lHunger Games Commands"));
         sender.sendMessage(plugin.formatMessage("&e/hg join [arena] &7- Join a game"));
+        sender.sendMessage(plugin.formatMessage("&e/hg rejoin &7- Rejoin after a disconnect or kick"));
         sender.sendMessage(plugin.formatMessage("&e/hg leave &7- Leave current game"));
+        sender.sendMessage(plugin.formatMessage("&e/hg unstuck &7- Clear leftover match invulnerability"));
         if (sender.hasPermission("hungergames.admin")) {
-            sender.sendMessage(plugin.formatMessage("&e/hg arena create <name> <radius> [wallHeight] &7- Create arena at 0,20,0"));
+            sender.sendMessage(plugin.formatMessage("&e/hg arena create <name> &7- Create arena at 0,20,0 (radius "
+                    + Arena.RADIUS + ", wall " + Arena.WALL_HEIGHT + ")"));
             sender.sendMessage(plugin.formatMessage("&e/hg arena setmode <name> <mode> &7- Set game mode"));
             sender.sendMessage(plugin.formatMessage("&e/hg arena generate <name> &7- Build arena"));
             sender.sendMessage(plugin.formatMessage("&e/hg reset <arena> &7- Restore arena to post-generation state"));
@@ -513,6 +575,7 @@ public class HgCommand implements CommandExecutor {
             sender.sendMessage(plugin.formatMessage("&e/hg loot give <player> <item> &7- Give custom item"));
             sender.sendMessage(plugin.formatMessage("&e/hg powerup list|spawn [id] &7- Power-up admin"));
             sender.sendMessage(plugin.formatMessage("&e/hg reload &7- Reload configs"));
+            sender.sendMessage(plugin.formatMessage("&e/hg unstuck [player|*] &7- Clear leftover invulnerability"));
         }
     }
 }

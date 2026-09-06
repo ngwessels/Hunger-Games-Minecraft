@@ -22,12 +22,13 @@ public class HgTabCompleter implements TabCompleter {
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         if (args.length >= 1 && !sender.hasPermission("hungergames.admin")
-                && !args[0].equalsIgnoreCase("join") && !args[0].equalsIgnoreCase("leave")) {
+                && !args[0].equalsIgnoreCase("join") && !args[0].equalsIgnoreCase("leave")
+                && !args[0].equalsIgnoreCase("rejoin") && !args[0].equalsIgnoreCase("unstuck")) {
             return List.of();
         }
 
         if (args.length == 1) {
-            return filter(List.of("arena", "join", "leave", "start", "simulate", "stop", "reset", "reload", "loot", "powerup"), args[0]);
+            return filter(List.of("arena", "join", "rejoin", "leave", "unstuck", "start", "simulate", "stop", "reset", "reload", "loot", "powerup"), args[0]);
         }
 
         if (args[0].equalsIgnoreCase("arena")) {
@@ -87,6 +88,13 @@ public class HgTabCompleter implements TabCompleter {
                 return filter(plugin.getPowerUpRegistry().getDefinitions().stream()
                         .map(d -> d.getId()).collect(Collectors.toList()), args[2]);
             }
+        }
+
+        if (args[0].equalsIgnoreCase("unstuck") && args.length == 2) {
+            List<String> names = plugin.getServer().getOnlinePlayers().stream()
+                    .map(Player::getName).collect(Collectors.toList());
+            names.add(0, "*");
+            return filter(names, args[1]);
         }
 
         return List.of();

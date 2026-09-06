@@ -5,7 +5,6 @@ import com.hungergames.arena.VolcanoCaldera;
 import com.hungergames.gamemode.TerrainPhaseConfig;
 import com.hungergames.util.CircleUtil;
 import org.bukkit.Material;
-import org.bukkit.Tag;
 import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.data.BlockData;
@@ -33,7 +32,19 @@ public class VolcanoLavaFlow {
             Material.GRAVEL, Material.SAND, Material.SANDSTONE, Material.MAGMA_BLOCK,
             Material.OAK_LOG, Material.OAK_LEAVES, Material.SPRUCE_LOG, Material.SPRUCE_LEAVES,
             Material.BIRCH_LOG, Material.BIRCH_LEAVES,
-            Material.TALL_GRASS, Material.SHORT_GRASS, Material.DEAD_BUSH, Material.FIRE
+            Material.JUNGLE_LOG, Material.JUNGLE_LEAVES,
+            Material.JUNGLE_PLANKS, Material.JUNGLE_WOOD,
+            Material.STRIPPED_JUNGLE_LOG, Material.STRIPPED_JUNGLE_WOOD,
+            Material.LADDER, Material.VINE, Material.JUNGLE_FENCE,
+            Material.FERN, Material.MOSS_CARPET,
+            Material.TALL_GRASS, Material.SHORT_GRASS, Material.DEAD_BUSH, Material.FIRE,
+            Material.CRIMSON_STEM, Material.WARPED_STEM,
+            Material.CRIMSON_HYPHAE, Material.WARPED_HYPHAE,
+            Material.CRIMSON_PLANKS, Material.WARPED_PLANKS,
+            Material.CRIMSON_FENCE, Material.WARPED_FENCE,
+            Material.NETHER_WART_BLOCK, Material.WARPED_WART_BLOCK,
+            Material.CRIMSON_NYLIUM, Material.WARPED_NYLIUM,
+            Material.SHROOMLIGHT, Material.SOUL_SAND, Material.SOUL_SOIL
     );
 
     private final List<Trench> trenches = new ArrayList<>();
@@ -328,7 +339,8 @@ public class VolcanoLavaFlow {
         }
         // Lava trenches erupt from the volcano foot; don't carve back through the cone.
         if (volcanoProtectRadius > 0 && dist <= volcanoProtectRadius + 2
-                && (type == Material.NETHERRACK || type == Material.MAGMA_BLOCK || type == Material.BLACKSTONE)) {
+                && (type == Material.LAVA || type == Material.NETHERRACK
+                || type == Material.MAGMA_BLOCK || type == Material.BLACKSTONE)) {
             return true;
         }
         return false;
@@ -347,9 +359,7 @@ public class VolcanoLavaFlow {
     }
 
     private boolean isFoliage(Material type) {
-        return Tag.LOGS.isTagged(type) || Tag.LEAVES.isTagged(type)
-                || type == Material.TALL_GRASS || type == Material.SHORT_GRASS
-                || type == Material.DEAD_BUSH || type == Material.FIRE;
+        return VolcanoHeatUtil.isFoliage(type);
     }
 
     private void clearVegetationAbove(World world, int x, int z, int groundY) {

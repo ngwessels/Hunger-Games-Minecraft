@@ -1,19 +1,27 @@
 package com.hungergames.game;
 
 import com.hungergames.util.BlockSnapshot;
+import org.bukkit.Bukkit;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.potion.PotionEffect;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 public class PlayerSession {
 
-    private final Player player;
+    private Player player;
+    private final UUID playerId;
+    private final String playerName;
     private boolean alive;
     private boolean spectator;
+    private boolean disconnected;
+    private long disconnectedAtMillis;
+    private MatchSnapshot matchSnapshot;
     private int playerKills;
     private int playerDeaths;
     private ItemStack[] savedInventory;
@@ -28,15 +36,149 @@ public class PlayerSession {
     private int spawnAnchorZ;
     private int respawnGraceRemaining;
     private Location cachedRespawnLocation;
+    private final List<Curse> curses = new ArrayList<>();
+    private int churchOffenses;
     private final List<BlockSnapshot> tempRespawnBlocks = new ArrayList<>();
 
     public PlayerSession(Player player) {
         this.player = player;
+        this.playerId = player.getUniqueId();
+        this.playerName = player.getName();
         this.alive = true;
     }
 
     public Player getPlayer() {
         return player;
+    }
+
+    public UUID getPlayerId() {
+        return playerId;
+    }
+
+    public String getPlayerName() {
+        return playerName;
+    }
+
+    public Player getOnlinePlayer() {
+        if (player != null && player.isOnline()) {
+            return player;
+        }
+        Player online = Bukkit.getPlayer(playerId);
+        return online != null && online.isOnline() ? online : null;
+    }
+
+    public void rebindPlayer(Player player) {
+        this.player = player;
+    }
+
+    public boolean isDisconnected() {
+        return disconnected;
+    }
+
+    public long getDisconnectedAtMillis() {
+        return disconnectedAtMillis;
+    }
+
+    public void markDisconnected() {
+        disconnected = true;
+        disconnectedAtMillis = System.currentTimeMillis();
+    }
+
+    public void clearDisconnected() {
+        disconnected = false;
+        disconnectedAtMillis = 0L;
+    }
+
+    public boolean hasMatchSnapshot() {
+        return matchSnapshot != null;
+    }
+
+    public void captureMatchSnapshot() {
+        Player online = getOnlinePlayer();
+        if (online == null) {
+            return;
+        }
+        ItemStack offHand = online.getInventory().getItemInOffHand();
+        matchSnapshot = new MatchSnapshot(
+                cloneItems(online.getInventory().getStorageContents()),
+                cloneItems(online.getInventory().getArmorContents()),
+                offHand == null || offHand.getType().isAir() ? null : offHand.clone(),
+                online.getLocation().clone(),
+                online.getGameMode(),
+                online.getHealth(),
+                online.getFoodLevel(),
+                online.getSaturation(),
+                online.getFireTicks(),
+                online.getTotalExperience(),
+                online.getAbsorptionAmount(),
+                List.copyOf(online.getActivePotionEffects())
+        );
+    }
+
+    public boolean applyMatchSnapshot(Player target) {
+        if (matchSnapshot == null || target == null || !target.isOnline()) {
+            return false;
+        }
+        MatchSnapshot snapshot = matchSnapshot;
+        if (target.isDead()) {
+            target.spigot().respawn();
+        }
+
+        target.getInventory().clear();
+        target.getInventory().setArmorContents(new ItemStack[4]);
+        target.getInventory().setItemInOffHand(null);
+
+        if (snapshot.inventory() != null) {
+            target.getInventory().setStorageContents(cloneItems(snapshot.inventory()));
+        }
+        if (snapshot.armor() != null) {
+            target.getInventory().setArmorContents(cloneItems(snapshot.armor()));
+        }
+        if (snapshot.offHand() != null) {
+            target.getInventory().setItemInOffHand(snapshot.offHand().clone());
+        }
+        if (snapshot.gameMode() != null) {
+            target.setGameMode(snapshot.gameMode());
+        }
+        if (snapshot.location() != null && snapshot.location().getWorld() != null) {
+            snapshot.location().getWorld().getChunkAt(snapshot.location());
+            target.teleport(snapshot.location());
+        }
+
+        target.setLevel(0);
+        target.setExp(0);
+        target.setTotalExperience(0);
+        int restoredExperience = Math.max(0, snapshot.totalExperience());
+        if (restoredExperience > 0) {
+            target.giveExp(restoredExperience);
+        }
+
+        for (PotionEffect effect : target.getActivePotionEffects()) {
+            target.removePotionEffect(effect.getType());
+        }
+        for (PotionEffect effect : snapshot.copiedEffects()) {
+            target.addPotionEffect(effect);
+        }
+        return true;
+    }
+
+    public void applyMatchVitals(Player target) {
+        if (matchSnapshot == null || target == null || !target.isOnline()) {
+            return;
+        }
+        MatchSnapshot snapshot = matchSnapshot;
+        double maxHealth = target.getMaxHealth();
+        double health = Math.min(Math.max(0.1, snapshot.health()), maxHealth);
+        target.setHealth(health);
+        target.setFoodLevel(snapshot.foodLevel());
+        target.setSaturation(snapshot.saturation());
+        target.setExhaustion(0f);
+        target.setFireTicks(Math.max(0, snapshot.fireTicks()));
+        target.setAbsorptionAmount(Math.max(0d, snapshot.absorption()));
+    }
+
+    public void clearMatchSnapshot() {
+        matchSnapshot = null;
     }
 
     public boolean isAlive() {
@@ -115,6 +257,53 @@ public class PlayerSession {
 
     public void clearRespawnGrace() {
         respawnGraceRemaining = 0;
+    }
+
+    /** Curses branded by church condemnation; they stack and survive deaths for the match. */
+    public List<Curse> getCurses() {
+        return curses;
+    }
+
+    public boolean hasCurse(Curse curse) {
+        return curse != null && curses.contains(curse);
+    }
+
+    public boolean hasBeastForm() {
+        return getBeastCurse() != null;
+    }
+
+    public Curse getBeastCurse() {
+        for (Curse curse : curses) {
+            if (curse.isBeastForm()) {
+                return curse;
+            }
+        }
+        return null;
+    }
+
+    /** Most recently applied curse, or null if none. */
+    public Curse getCurse() {
+        return curses.isEmpty() ? null : curses.get(curses.size() - 1);
+    }
+
+    public void addCurse(Curse curse) {
+        if (curse != null && !curses.contains(curse)) {
+            curses.add(curse);
+        }
+    }
+
+    public void clearCurses() {
+        curses.clear();
+        churchOffenses = 0;
+    }
+
+    /** Church PvP offenses this match; each one raises the curse tier. */
+    public int getChurchOffenses() {
+        return churchOffenses;
+    }
+
+    public int incrementChurchOffenses() {
+        return ++churchOffenses;
     }
 
     public Location getCachedRespawnLocation() {
@@ -248,11 +437,16 @@ public class PlayerSession {
         }
         player.setLevel(0);
         player.setExp(0);
-        player.setTotalExperience(snapshot.totalExperience());
+        player.setTotalExperience(0);
+        int restoredExperience = Math.max(0, snapshot.totalExperience());
+        if (restoredExperience > 0) {
+            player.giveExp(restoredExperience);
+        }
         player.setAllowFlight(false);
         player.setFlying(false);
         player.setInvisible(false);
         player.setGlowing(false);
+        MatchKit.clearPostMatchFlags(player);
         MatchKit.restoreVitals(player);
     }
 

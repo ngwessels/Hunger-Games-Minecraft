@@ -18,6 +18,13 @@ public class GameMode {
     private String initialTerrain;
     private boolean borderShrinkEnabled;
     private TreePlacementConfig treePlacement;
+    private JungleGroveConfig jungleGrove;
+    private PondConfig ponds;
+    private SettlementConfig settlement;
+    private RageConfig rage;
+    private ArcticConfig arctic;
+    private CometConfig comet;
+    private int arenaRadius = 300;
     private final List<TerrainPhaseConfig> terrainPhases = new ArrayList<>();
 
     public GameMode(String id) {
@@ -122,6 +129,70 @@ public class GameMode {
 
     public void setTreePlacement(TreePlacementConfig treePlacement) {
         this.treePlacement = treePlacement;
+    }
+
+    public JungleGroveConfig getJungleGrove() {
+        return jungleGrove;
+    }
+
+    public void setJungleGrove(JungleGroveConfig jungleGrove) {
+        this.jungleGrove = jungleGrove;
+    }
+
+    public PondConfig getPonds() {
+        return ponds;
+    }
+
+    public void setPonds(PondConfig ponds) {
+        this.ponds = ponds;
+    }
+
+    public SettlementConfig getSettlement() {
+        return settlement;
+    }
+
+    public void setSettlement(SettlementConfig settlement) {
+        this.settlement = settlement;
+    }
+
+    public RageConfig getRage() {
+        return rage;
+    }
+
+    public void setRage(RageConfig rage) {
+        this.rage = rage;
+    }
+
+    public ArcticConfig getArctic() {
+        return arctic;
+    }
+
+    public void setArctic(ArcticConfig arctic) {
+        this.arctic = arctic;
+    }
+
+    public CometConfig getComet() {
+        return comet;
+    }
+
+    public void setComet(CometConfig comet) {
+        this.comet = comet;
+    }
+
+    public int getArenaRadius() {
+        return Math.max(20, arenaRadius);
+    }
+
+    public void setArenaRadius(int arenaRadius) {
+        this.arenaRadius = Math.max(20, arenaRadius);
+    }
+
+    /** Inner forest/volcano playable radius; equals arena radius when arctic is off. */
+    public int getForestRadius() {
+        if (arctic != null && arctic.isEnabled()) {
+            return Math.min(getArenaRadius(), Math.max(20, arctic.getForestRadius()));
+        }
+        return getArenaRadius();
     }
 
     public List<TerrainPhaseConfig> getTerrainPhases() {

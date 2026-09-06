@@ -7,7 +7,7 @@ powerups:
     effect: POTION
     params:
       potionType: SPEED
-      durationSeconds: 20
+      durationSeconds: 100
       amplifier: 2
 
   strength_surge:
@@ -18,7 +18,7 @@ powerups:
     effect: POTION
     params:
       potionType: STRENGTH
-      durationSeconds: 20
+      durationSeconds: 100
       amplifier: 2
 
   regen_burst:
@@ -29,7 +29,7 @@ powerups:
     effect: POTION
     params:
       potionType: REGENERATION
-      durationSeconds: 25
+      durationSeconds: 125
       amplifier: 1
 
   absorption_shield:
@@ -40,7 +40,7 @@ powerups:
     effect: ABSORPTION
     params:
       hearts: 4
-      durationSeconds: 30
+      durationSeconds: 150
 
   instant_heal:
     displayName: "&cInstant Heal"
@@ -59,7 +59,7 @@ powerups:
     effect: POTION
     params:
       potionType: FIRE_RESISTANCE
-      durationSeconds: 30
+      durationSeconds: 150
       amplifier: 1
 
   jump_boost:
@@ -70,7 +70,7 @@ powerups:
     effect: POTION
     params:
       potionType: JUMP_BOOST
-      durationSeconds: 20
+      durationSeconds: 100
       amplifier: 2
 
   volcano_ascendant:

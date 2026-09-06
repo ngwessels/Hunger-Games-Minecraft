@@ -7,11 +7,14 @@ import com.hungergames.game.Game;
 import com.hungergames.game.MatchPacing;
 import com.hungergames.gamemode.TerrainPhaseConfig;
 import com.hungergames.powerup.PowerUpDefinition;
+import com.hungergames.terrain.ArcticMeltSurge;
 import com.hungergames.terrain.FireTornado;
 import com.hungergames.terrain.TerrainPhase;
 import com.hungergames.terrain.VolcanoGuardian;
 import com.hungergames.terrain.VolcanoHeatUtil;
 import com.hungergames.terrain.VolcanoLavaFlow;
+import com.hungergames.terrain.VolcanoNetherSpread;
+import com.hungergames.terrain.VolcanoPiglinHorde;
 import com.hungergames.util.ArenaEntityUtil;
 import com.hungergames.util.ArenaScatterUtil;
 import com.hungergames.util.CircleUtil;
@@ -40,17 +43,17 @@ public class VolcanoEruptionPhase implements TerrainPhase {
 
     private static final int VENT_RADIUS = 2;
     private static final int CONE_ARENA_EDGE_MARGIN = 3;
-    /**
-     * Layers whose radius barely exceeds the caldera bowl would only place thin
-     * sliver rings (stacked, they look like netherrack pillars around the rim).
-     */
-    private static final double MIN_CONE_LAYER_RADIUS = VolcanoCaldera.CALDERA_LAVA_RADIUS + 2.0;
+    private static final double TNT_DRAG = 0.98;
+    private static final double TNT_GRAVITY = 0.04;
     /** Hard cap on cone block reads per tick so big cones can't stall the main thread. */
     private static final int CONE_VISIT_BUDGET_PER_TICK = 60_000;
     private static final EntityType[] EARLY_MOBS = {EntityType.BLAZE, EntityType.MAGMA_CUBE};
     private static final EntityType[] LATE_MOBS = {
             EntityType.BLAZE, EntityType.MAGMA_CUBE,
             EntityType.WITHER_SKELETON, EntityType.PIGLIN_BRUTE, EntityType.HOGLIN
+    };
+    private static final EntityType[] FOREST_MOBS = {
+            EntityType.ZOMBIE, EntityType.SKELETON, EntityType.SPIDER
     };
     /** Original arena terrain that must be replaced inside the growing cone shell. */
     private static final Set<Material> NATURAL_TERRAIN = Set.of(
@@ -59,14 +62,28 @@ public class VolcanoEruptionPhase implements TerrainPhase {
             Material.TUFF, Material.DEEPSLATE, Material.GRAVEL, Material.SAND, Material.SANDSTONE,
             Material.OAK_LOG, Material.OAK_LEAVES, Material.SPRUCE_LOG, Material.SPRUCE_LEAVES,
             Material.BIRCH_LOG, Material.BIRCH_LEAVES,
-            Material.TALL_GRASS, Material.SHORT_GRASS, Material.DEAD_BUSH, Material.FIRE
+            Material.JUNGLE_LOG, Material.JUNGLE_LEAVES,
+            Material.JUNGLE_PLANKS, Material.JUNGLE_WOOD,
+            Material.STRIPPED_JUNGLE_LOG, Material.STRIPPED_JUNGLE_WOOD,
+            Material.LADDER, Material.VINE, Material.JUNGLE_FENCE,
+            Material.FERN, Material.MOSS_CARPET,
+            Material.TALL_GRASS, Material.SHORT_GRASS, Material.DEAD_BUSH, Material.FIRE,
+            Material.CRIMSON_STEM, Material.WARPED_STEM,
+            Material.CRIMSON_HYPHAE, Material.WARPED_HYPHAE,
+            Material.CRIMSON_PLANKS, Material.WARPED_PLANKS,
+            Material.CRIMSON_FENCE, Material.WARPED_FENCE,
+            Material.NETHER_WART_BLOCK, Material.WARPED_WART_BLOCK,
+            Material.CRIMSON_NYLIUM, Material.WARPED_NYLIUM,
+            Material.SHROOMLIGHT, Material.WEEPING_VINES, Material.TWISTING_VINES,
+            Material.CRIMSON_ROOTS, Material.WARPED_ROOTS, Material.NETHER_SPROUTS,
+            Material.SOUL_SAND, Material.SOUL_SOIL
     );
 
     private final HungerGamesPlugin plugin;
     private final Random random = new Random();
 
     private long eruptionStartMs;
-    private long lastProjectileMs;
+    private double tntSpawnCredit;
     private long lastVolcanoLightningMs;
     private int calderaFloorY;
     private double cx;
@@ -83,6 +100,9 @@ public class VolcanoEruptionPhase implements TerrainPhase {
     private VolcanoGuardian volcanoGuardian;
     private boolean volcanoGuardianSpawned;
     private boolean guardianPausedForPlayer;
+    private final VolcanoPiglinHorde piglinHorde;
+    private final VolcanoNetherSpread netherSpread;
+    private final ArcticMeltSurge arcticMeltSurge;
     private TerrainPhaseConfig activeConfig;
     private Arena activeArena;
     private Game activeGame;
@@ -93,6 +113,9 @@ public class VolcanoEruptionPhase implements TerrainPhase {
 
     public VolcanoEruptionPhase(HungerGamesPlugin plugin) {
         this.plugin = plugin;
+        this.piglinHorde = new VolcanoPiglinHorde(plugin);
+        this.netherSpread = new VolcanoNetherSpread();
+        this.arcticMeltSurge = new ArcticMeltSurge();
     }
 
     @Override
@@ -105,7 +128,7 @@ public class VolcanoEruptionPhase implements TerrainPhase {
         activeArena = arena;
         activeConfig = config;
         eruptionStartMs = System.currentTimeMillis();
-        lastProjectileMs = 0;
+        tntSpawnCredit = 0;
         lastVolcanoLightningMs = 0;
         builtLayers = 0;
         highestBuiltLayer = 0;
@@ -127,6 +150,16 @@ public class VolcanoEruptionPhase implements TerrainPhase {
         calderaRimOpened = false;
         cx = arena.getCenterX();
         cz = arena.getCenterZ();
+        netherSpread.initialize(cx, cz, (int) arena.getCenterY());
+        arcticMeltSurge.reset();
+
+        if (piglinHorde.isActive()) {
+            piglinHorde.destroy();
+        }
+        if (config.getInt("piglinHordeEnabled", 1) != 0) {
+            piglinHorde.configure(config);
+            piglinHorde.start(game, arena);
+        }
 
         World world = arena.getWorld();
         if (world != null) {
@@ -134,6 +167,7 @@ public class VolcanoEruptionPhase implements TerrainPhase {
             VolcanoCaldera.activateCalderaLava(world, cx, calderaFloorY + 1, cz);
             lavaFlow = new VolcanoLavaFlow();
             lavaFlow.initialize(world, cx, cz, calderaFloorY, random);
+            netherSpread.initialize(cx, cz, calderaFloorY);
         }
     }
 
@@ -149,6 +183,7 @@ public class VolcanoEruptionPhase implements TerrainPhase {
 
         double intensity = getIntensity(game, config);
         boolean lavaActive = isLavaActive(config);
+        spreadNether(world, arena, game, config);
 
         if (lavaActive) {
             if (lavaFlow != null) {
@@ -162,15 +197,13 @@ public class VolcanoEruptionPhase implements TerrainPhase {
             igniteFlammablesNearHotRock(game, world, arena, config);
             accelerateArenaFireBurn(world, arena, config);
             decayOrphanedArenaFire(world, arena, config);
-
-            if (intensity >= 0.1) {
-                trySpawnProjectiles(world, config);
-            }
+            trySpawnProjectiles(world, config);
         }
 
         if (intensity >= config.getDouble("mobSpawnMinIntensity", 0.25)) {
             trySpawnMobs(world, arena, config, intensity);
         }
+        trySpawnForestMobs(world, arena, config, intensity);
 
         trySpawnGhasts(world, arena, config, intensity);
 
@@ -188,6 +221,7 @@ public class VolcanoEruptionPhase implements TerrainPhase {
 
     @Override
     public void onEnd(Game game, Arena arena, TerrainPhaseConfig config) {
+        piglinHorde.destroy();
         for (FireTornado tornado : fireTornados) {
             tornado.destroy();
         }
@@ -322,6 +356,40 @@ public class VolcanoEruptionPhase implements TerrainPhase {
         return getTargetBaseRadius(arena, game, config, eruptionElapsedSec);
     }
 
+    /**
+     * Nether conversion reaches the arena edge by the end of the match, independent
+     * of how wide the cone itself grows.
+     */
+    private int getNetherSpreadTargetRadius(Arena arena, Game game, TerrainPhaseConfig config) {
+        long eruptionElapsedSec = (System.currentTimeMillis() - eruptionStartMs) / 1000L;
+        double growthProgress = getGrowthProgress(game, config, eruptionElapsedSec);
+        double scale = config.getDouble("netherSpreadRadiusScale", 1.0);
+        int minRadius = VolcanoCaldera.NO_TREE_RADIUS;
+        int maxRadius = Math.max(minRadius, arena.getRadius() - 2);
+        return minRadius + (int) Math.round((maxRadius - minRadius) * growthProgress * scale);
+    }
+
+    private void spreadNether(World world, Arena arena, Game game, TerrainPhaseConfig config) {
+        if (config.getInt("netherSpreadEnabled", 1) == 0) {
+            return;
+        }
+        netherSpread.tick(world, arena, game.getGameMode(), config, getNetherSpreadTargetRadius(arena, game, config));
+        arcticMeltSurge.tick(plugin, game, arena, config, netherSpread.getConvertedRadius());
+        piglinHorde.setNetherSpreadRadius(netherSpread.getConvertedRadius());
+    }
+
+    public boolean isNetherConverted(int x, int z) {
+        return netherSpread.contains(x, z);
+    }
+
+    public boolean isNetherConvertedGround(World world, int x, int z) {
+        return netherSpread.isConvertedGround(world, x, z);
+    }
+
+    public int getNetherSpreadRadius() {
+        return netherSpread.getConvertedRadius();
+    }
+
     private double getIntensity(Game game, TerrainPhaseConfig config) {
         double matchProgress = MatchPacing.getMatchProgress(game, plugin.getPluginConfig());
         if (matchProgress >= 0) {
@@ -353,8 +421,9 @@ public class VolcanoEruptionPhase implements TerrainPhase {
         return Math.min(1.0, eruptionElapsedSec / (double) Math.max(1, rampSeconds));
     }
 
-    private int getMaxConeBaseRadius(Arena arena, TerrainPhaseConfig config) {
-        int arenaEdge = Math.max(1, arena.getRadius() - CONE_ARENA_EDGE_MARGIN);
+    private int getMaxConeBaseRadius(Arena arena, Game game, TerrainPhaseConfig config) {
+        int forestEdge = game != null ? game.getGameMode().getForestRadius() : arena.getRadius();
+        int arenaEdge = Math.max(1, forestEdge - CONE_ARENA_EDGE_MARGIN);
         int configuredCap = config.getInt("maxConeBaseRadius", 0);
         if (configuredCap > 0) {
             return Math.min(arenaEdge, configuredCap);
@@ -366,7 +435,7 @@ public class VolcanoEruptionPhase implements TerrainPhase {
         double growthProgress = getGrowthProgress(game, config, eruptionElapsedSec);
         double baseGrowthScale = config.getDouble("coneBaseGrowthScale", 0.6);
         int minBase = config.getInt("baseRadius", 8);
-        int maxBase = getMaxConeBaseRadius(arena, config);
+        int maxBase = getMaxConeBaseRadius(arena, game, config);
         return minBase + (int) Math.round((maxBase - minBase) * growthProgress * baseGrowthScale);
     }
 
@@ -411,16 +480,7 @@ public class VolcanoEruptionPhase implements TerrainPhase {
         // check inside scanAndFillLayer keeps growth physically bottom-up.
         while (visitBudget > 0 && placeBudget > 0) {
             double layerRadius = coneRadiusAtLayer(buildScanLayer, targetLayers, targetBaseRadius, tipRadius);
-            if (layerRadius < MIN_CONE_LAYER_RADIUS) {
-                if (knownCompleteLayers == buildScanLayer - 1) {
-                    knownCompleteLayers = buildScanLayer;
-                }
-                if (!advanceScanLayer(targetLayers) && ++wraps >= 2) {
-                    break;
-                }
-                continue;
-            }
-            int[] result = scanAndFillLayer(world, buildScanLayer, layerRadius, tipRadius,
+            int[] result = scanAndFillLayer(world, buildScanLayer, layerRadius,
                     placeBudget, visitBudget, buildScanIndex);
             if (result[0] > 0 && buildScanLayer > highestBuiltLayer) {
                 highestBuiltLayer = buildScanLayer;
@@ -448,39 +508,13 @@ public class VolcanoEruptionPhase implements TerrainPhase {
             }
         }
 
-        // Monotonic: the netherrack peak never shrinks (TNT can't break it), so
+        // Monotonic: the lava peak never shrinks (TNT can't break it), so
         // keep launch/spawn heights stable while rims are being backfilled.
         builtLayers = Math.max(builtLayers, Math.max(1, Math.min(targetLayers, knownCompleteLayers + 1)));
-        carveVent(world, targetLayers + 4);
         if (!calderaRimOpened && builtLayers >= 1) {
             openCalderaRimForOverflow(world);
             calderaRimOpened = true;
         }
-        maintainSummitLavaPool(world, game, arena, config);
-        spillLavaDownInteriorWalls(world, game, arena, config);
-    }
-
-    /** Lava surface sits one block below the physical cone peak. */
-    private int getSummitLavaY() {
-        return calderaFloorY + Math.max(1, getPeakLayers() - 1);
-    }
-
-    /**
-     * Summit pool radius grows with the cone so lava reaches the inner shell and can
-     * spill down the slopes instead of staying trapped in the original caldera bowl.
-     */
-    private int getSummitPoolRadius(Game game, Arena arena, TerrainPhaseConfig config) {
-        long eruptionElapsedSec = (System.currentTimeMillis() - eruptionStartMs) / 1000L;
-        int targetLayers = getTargetLayers(game, config, eruptionElapsedSec);
-        int targetBaseRadius = getTargetBaseRadius(arena, game, config, eruptionElapsedSec);
-        double tipRadius = config.getDouble("coneTipRadius", 1.5);
-        int layer = Math.max(1, getPeakLayers());
-        double coneRadius = coneRadiusAtLayer(layer, targetLayers, targetBaseRadius, tipRadius);
-        int poolRadius = (int) Math.ceil(Math.max(VolcanoCaldera.CALDERA_LAVA_RADIUS, coneRadius));
-        if (coneRadius < MIN_CONE_LAYER_RADIUS) {
-            poolRadius = Math.max(poolRadius, (int) MIN_CONE_LAYER_RADIUS);
-        }
-        return poolRadius;
     }
 
     /**
@@ -510,139 +544,6 @@ public class VolcanoEruptionPhase implements TerrainPhase {
         }
     }
 
-    /**
-     * Keeps a lava pool in the crater one block below the volcano's current peak so the
-     * summit never looks like an empty shaft. The pool rides up as layers complete and
-     * widens to the cone lip; only the central vent shaft is cleared below the pool so
-     * flowing lava on the interior slopes is left alone.
-     */
-    private void maintainSummitLavaPool(World world, Game game, Arena arena, TerrainPhaseConfig config) {
-        int poolY = getSummitLavaY();
-        int plugY = poolY - 1;
-        int icx = (int) cx;
-        int icz = (int) cz;
-        int r = getSummitPoolRadius(game, arena, config);
-        int rSq = r * r;
-
-        for (int dx = -r; dx <= r; dx++) {
-            for (int dz = -r; dz <= r; dz++) {
-                if (dx * dx + dz * dz > rSq) {
-                    continue;
-                }
-                int x = icx + dx;
-                int z = icz + dz;
-
-                Block plug = world.getBlockAt(x, plugY, z);
-                if (plug.getType() != Material.MAGMA_BLOCK && plug.getType() != Material.LAVA) {
-                    plug.setType(Material.MAGMA_BLOCK, false);
-                }
-                Block pool = world.getBlockAt(x, poolY, z);
-                if (!VolcanoCaldera.isLavaSource(pool)) {
-                    VolcanoCaldera.placeLavaSource(pool);
-                }
-            }
-        }
-        clearVentBelowPool(world);
-    }
-
-    /** Clears only the narrow vent column under the pool; does not strip lava on cone slopes. */
-    private void clearVentBelowPool(World world) {
-        int plugY = getSummitLavaY() - 1;
-        int icx = (int) cx;
-        int icz = (int) cz;
-        for (int y = plugY - 1; y >= calderaFloorY + 1; y--) {
-            for (int dx = -VENT_RADIUS; dx <= VENT_RADIUS; dx++) {
-                for (int dz = -VENT_RADIUS; dz <= VENT_RADIUS; dz++) {
-                    if (!isInsideVent(dx, dz)) {
-                        continue;
-                    }
-                    Block block = world.getBlockAt(icx + dx, y, icz + dz);
-                    Material type = block.getType();
-                    if (type == Material.LAVA || type == Material.MAGMA_BLOCK) {
-                        block.setType(Material.AIR, false);
-                    }
-                }
-            }
-        }
-    }
-
-    /**
-     * Seeds lava on the inner cone face so molten rock visibly runs down the volcano as
-     * it grows, even when the summit pool sits above the widest part of the shell.
-     */
-    private void spillLavaDownInteriorWalls(World world, Game game, Arena arena, TerrainPhaseConfig config) {
-        int budget = config.getInt("lavaConeSpillPerTick", 8);
-        if (budget <= 0 || getPeakLayers() < 1) {
-            return;
-        }
-
-        long eruptionElapsedSec = (System.currentTimeMillis() - eruptionStartMs) / 1000L;
-        int targetLayers = getTargetLayers(game, config, eruptionElapsedSec);
-        int targetBaseRadius = getTargetBaseRadius(arena, game, config, eruptionElapsedSec);
-        double tipRadius = config.getDouble("coneTipRadius", 1.5);
-        int poolY = getSummitLavaY();
-        int heightRange = Math.max(1, poolY - calderaFloorY);
-        int placed = 0;
-
-        for (int attempt = 0; attempt < budget * 4 && placed < budget; attempt++) {
-            double angle = random.nextDouble() * Math.PI * 2;
-            int y = calderaFloorY + 1 + random.nextInt(heightRange);
-            int layer = y - calderaFloorY;
-            double layerRadius = coneRadiusAtLayer(layer, targetLayers, targetBaseRadius, tipRadius);
-            if (layerRadius < MIN_CONE_LAYER_RADIUS) {
-                continue;
-            }
-            int dist = Math.max((int) MIN_CONE_LAYER_RADIUS - 1, (int) Math.round(layerRadius) - 1);
-            int x = (int) Math.round(cx + Math.cos(angle) * dist);
-            int z = (int) Math.round(cz + Math.sin(angle) * dist);
-
-            if (tryPlaceSpillLava(world, x, y, z, angle)) {
-                placed++;
-            }
-        }
-    }
-
-    private boolean tryPlaceSpillLava(World world, int x, int y, int z, double outwardAngle) {
-        Block face = world.getBlockAt(x, y, z);
-        Material faceType = face.getType();
-        if (!VolcanoHeatUtil.isHotVolcanoBlock(faceType) && faceType != Material.BLACKSTONE) {
-            return false;
-        }
-
-        Block above = world.getBlockAt(x, y + 1, z);
-        if (above.getType().isAir()) {
-            placeFlowingLava(above);
-            return true;
-        }
-
-        int ox = (int) Math.round(Math.cos(outwardAngle));
-        int oz = (int) Math.round(Math.sin(outwardAngle));
-        if (ox == 0 && oz == 0) {
-            return false;
-        }
-        Block outer = world.getBlockAt(x + ox, y, z + oz);
-        if (outer.getType().isAir()) {
-            placeFlowingLava(outer);
-            return true;
-        }
-        Block outerAbove = world.getBlockAt(x + ox, y + 1, z + oz);
-        if (outerAbove.getType().isAir()) {
-            placeFlowingLava(outerAbove);
-            return true;
-        }
-        return false;
-    }
-
-    private static void placeFlowingLava(Block block) {
-        var data = Material.LAVA.createBlockData();
-        if (data instanceof org.bukkit.block.data.Levelled levelled) {
-            levelled.setLevel(1);
-            block.setBlockData(levelled, true);
-        } else {
-            block.setType(Material.LAVA, true);
-        }
-    }
-
     /** The tallest layer with any blocks placed; the physical summit can be above builtLayers. */
     private int getPeakLayers() {
         return Math.max(builtLayers, highestBuiltLayer);
@@ -666,10 +567,10 @@ public class VolcanoEruptionPhase implements TerrainPhase {
     }
 
     /**
-     * Single bounded pass over one cone layer: fills missing blocks while counting work.
+     * Single bounded pass over one cone layer: fills missing lava while counting work.
      * Returns {placed, visited, missingUnfilled, finishedScan(0/1), resumeIndex}.
      */
-    private int[] scanAndFillLayer(World world, int layer, double radius, double tipRadius,
+    private int[] scanAndFillLayer(World world, int layer, double radius,
                                    int placeBudget, int visitBudget, int startIndex) {
         int icx = (int) cx;
         int icz = (int) cz;
@@ -677,8 +578,6 @@ public class VolcanoEruptionPhase implements TerrainPhase {
         int side = 2 * ir + 1;
         int totalCells = side * side;
         double radiusSq = radius * radius;
-        double magmaRadiusSq = (tipRadius + 1) * (tipRadius + 1);
-        boolean magmaLayer = layer % 8 == 0;
         int y = calderaFloorY + layer;
 
         int placed = 0;
@@ -695,25 +594,20 @@ public class VolcanoEruptionPhase implements TerrainPhase {
             if (distSq > radiusSq) {
                 continue;
             }
-            if (isInsideVent(dx, dz) || isInsideCalderaBowl(dx, dz)) {
-                continue;
-            }
             int x = icx + dx;
             int z = icz + dz;
             Block block = world.getBlockAt(x, y, z);
-            Material type = block.getType();
-            Material mat = magmaLayer && distSq <= magmaRadiusSq
-                    ? Material.MAGMA_BLOCK : Material.NETHERRACK;
-            if (type == mat) {
+            if (VolcanoCaldera.isLavaSource(block)) {
                 continue;
             }
-            if (!shouldReplaceForCone(type)) {
+            Material type = block.getType();
+            if (type != Material.LAVA && !shouldReplaceForCone(type)) {
                 continue;
             }
 
-            int solidTopY = findSolidTopY(world, x, z, y);
-            if (y - 1 > solidTopY) {
-                int gapPlaced = fillColumnGaps(world, x, z, solidTopY + 1, y - 1, mat, placeBudget - placed);
+            int supportTopY = findConeSupportTopY(world, x, z, y);
+            if (y - 1 > supportTopY) {
+                int gapPlaced = fillColumnGaps(world, x, z, supportTopY + 1, y - 1, placeBudget - placed);
                 placed += gapPlaced;
                 if (placed >= placeBudget) {
                     missing++;
@@ -722,7 +616,7 @@ public class VolcanoEruptionPhase implements TerrainPhase {
             }
 
             Material below = world.getBlockAt(x, y - 1, z).getType();
-            if (!below.isSolid()) {
+            if (!isConeSupport(below)) {
                 missing++;
                 continue;
             }
@@ -730,10 +624,8 @@ public class VolcanoEruptionPhase implements TerrainPhase {
                 missing++;
                 continue;
             }
-            block.setType(mat, false);
-            if (VolcanoHeatUtil.isHotVolcanoBlock(mat)) {
-                VolcanoHeatUtil.igniteFlammablesNearHotBlock(world, x, y, z);
-            }
+            placeConeLava(block);
+            VolcanoHeatUtil.igniteFlammablesNearHotBlock(world, x, y, z);
             placed++;
         }
 
@@ -741,7 +633,8 @@ public class VolcanoEruptionPhase implements TerrainPhase {
     }
 
     private boolean shouldReplaceForCone(Material type) {
-        return type == Material.AIR || type == Material.LAVA || isNaturalTerrain(type)
+        return type == Material.AIR || type == Material.WATER
+                || isNaturalTerrain(type)
                 || type == Material.NETHERRACK || type == Material.MAGMA_BLOCK || type == Material.BLACKSTONE;
     }
 
@@ -749,38 +642,49 @@ public class VolcanoEruptionPhase implements TerrainPhase {
         return NATURAL_TERRAIN.contains(type);
     }
 
-    /** Highest solid block below the target layer (terrain dip or existing cone). */
-    private int findSolidTopY(World world, int x, int z, int belowY) {
+    private boolean isConeSupport(Material type) {
+        return type == Material.LAVA
+                || (type.isSolid() && !VolcanoHeatUtil.isFoliage(type));
+    }
+
+    /**
+     * Highest lava or solid non-foliage block below the target layer. Trees are fill,
+     * not support: treating canopies as ground made the cone climb tall trees
+     * and grow upward away from the slope wherever the front met a grove.
+     */
+    private int findConeSupportTopY(World world, int x, int z, int belowY) {
         for (int y = belowY - 1; y >= 1; y--) {
-            Material type = world.getBlockAt(x, y, z).getType();
-            if (type.isSolid() && type != Material.LAVA) {
+            if (isConeSupport(world.getBlockAt(x, y, z).getType())) {
                 return y;
             }
         }
         return calderaFloorY;
     }
 
-    private int fillColumnGaps(World world, int x, int z, int fromY, int toY, Material mat, int budget) {
+    private int fillColumnGaps(World world, int x, int z, int fromY, int toY, int budget) {
         int placed = 0;
         for (int fillY = fromY; fillY <= toY && placed < budget; fillY++) {
             Block block = world.getBlockAt(x, fillY, z);
-            Material type = block.getType();
-            if (type == mat) {
+            if (VolcanoCaldera.isLavaSource(block)) {
                 continue;
             }
-            if (type.isAir() || type == Material.LAVA || isNaturalTerrain(type)
+            Material type = block.getType();
+            if (type == Material.LAVA || type.isAir() || type == Material.WATER || isNaturalTerrain(type)
                     || type == Material.NETHERRACK || type == Material.MAGMA_BLOCK || type == Material.BLACKSTONE) {
-                block.setType(mat, false);
-                if (VolcanoHeatUtil.isHotVolcanoBlock(mat)) {
-                    VolcanoHeatUtil.igniteFlammablesNearHotBlock(world, x, fillY, z);
-                }
+                placeConeLava(block);
+                VolcanoHeatUtil.igniteFlammablesNearHotBlock(world, x, fillY, z);
                 placed++;
             }
         }
         return placed;
     }
 
-    /** Keeps wood and leaves burning as hot netherrack expands into the forest. */
+    /** Source lava with physics off so the cone keeps its shape instead of flooding. */
+    private static void placeConeLava(Block block) {
+        block.setBlockData(VolcanoCaldera.createLavaSourceData(), false);
+    }
+
+    /** Keeps wood and leaves burning as the lava cone expands into the forest. */
     private void igniteFlammablesNearHotRock(Game game, World world, Arena arena, TerrainPhaseConfig config) {
         int growthRadius = getVolcanoGrowthRadius(arena, game, config);
         int scanRadius = growthRadius + config.getInt("hotNetherrackIgniteMargin", 8);
@@ -831,63 +735,36 @@ public class VolcanoEruptionPhase implements TerrainPhase {
                 });
     }
 
-    private boolean isInsideVent(int dx, int dz) {
-        return dx * dx + dz * dz <= VENT_RADIUS * VENT_RADIUS;
-    }
-
-    private boolean isInsideCalderaBowl(int dx, int dz) {
-        return dx * dx + dz * dz <= VolcanoCaldera.CALDERA_LAVA_RADIUS * VolcanoCaldera.CALDERA_LAVA_RADIUS;
-    }
-
-    private void carveVent(World world, int topY) {
-        int icx = (int) cx;
-        int icz = (int) cz;
-        int poolY = getSummitLavaY();
-        int plugY = poolY - 1;
-        for (int y = calderaFloorY + 1; y <= calderaFloorY + topY; y++) {
-            if (y == poolY || y == plugY) {
-                continue; // summit lava pool lives here
-            }
-            for (int dx = -VENT_RADIUS; dx <= VENT_RADIUS; dx++) {
-                for (int dz = -VENT_RADIUS; dz <= VENT_RADIUS; dz++) {
-                    if (!isInsideVent(dx, dz)) {
-                        continue;
-                    }
-                    Block block = world.getBlockAt(icx + dx, y, icz + dz);
-                    Material type = block.getType();
-                    if (y > calderaFloorY && (type == Material.LAVA || type == Material.MAGMA_BLOCK)) {
-                        block.setType(Material.AIR, false);
-                    } else if (type != Material.LAVA && type != Material.MAGMA_BLOCK) {
-                        block.setType(Material.AIR, false);
-                    }
-                }
+    private void trySpawnProjectiles(World world, TerrainPhaseConfig config) {
+        double progress = getTntHeightProgress(config);
+        if (activeGame != null) {
+            double match = MatchPacing.getMatchProgress(activeGame, plugin.getPluginConfig());
+            if (match >= 0) {
+                progress = Math.max(progress, match);
             }
         }
-    }
 
-    private void trySpawnProjectiles(World world, TerrainPhaseConfig config) {
-        long now = System.currentTimeMillis();
-        double intervalMin = config.getDouble("projectileIntervalMin", 4) * 1000;
-        double intervalMax = config.getDouble("projectileIntervalMax", 1) * 1000;
-        double heightProgress = getTntHeightProgress(config);
-        long interval = (long) (intervalMax + (intervalMin - intervalMax) * (1.0 - heightProgress));
+        double rateMin = config.getDouble("projectileRatePerSecondMin", 8.0);
+        double rateMax = Math.max(rateMin, config.getDouble("projectileRatePerSecondMax", 22.0));
+        int maxPerTick = Math.max(1, config.getInt("projectileMaxPerTick", 8));
+        double rate = rateMin + (rateMax - rateMin) * progress;
+        tntSpawnCredit += rate / 20.0;
 
-        if (now - lastProjectileMs < interval) {
+        int count = Math.min(maxPerTick, (int) tntSpawnCredit);
+        if (count <= 0) {
             return;
         }
-        lastProjectileMs = now;
-
-        int maxBurst = Math.max(1, config.getInt("projectileMaxPerBurst", 4));
-        int count = 1 + (int) Math.round(heightProgress * (maxBurst - 1));
+        tntSpawnCredit -= count;
+        Location launch = getVentLaunchLocation(world);
         for (int i = 0; i < count; i++) {
-            spawnProjectile(world, getVentLaunchLocation(world), config);
+            spawnProjectile(world, launch, config);
         }
     }
 
     private Location getVentLaunchLocation(World world) {
         double angle = random.nextDouble() * Math.PI * 2;
         double offset = VENT_RADIUS + 0.5 + random.nextDouble() * 1.5;
-        int launchY = calderaFloorY + getPeakLayers() + 3;
+        int launchY = calderaFloorY + getPeakLayers() + 5;
         return new Location(
                 world,
                 cx + Math.cos(angle) * offset,
@@ -897,28 +774,9 @@ public class VolcanoEruptionPhase implements TerrainPhase {
     }
 
     private void spawnProjectile(World world, Location launch, TerrainPhaseConfig config) {
-        double speedMin = config.getDouble("tntSpeedMin", 0.4);
-        double speedMax = config.getDouble("tntSpeedMax", 1.8);
-        double upMin = config.getDouble("tntUpMin", 0.6);
-        double upMax = config.getDouble("tntUpMax", 2.0);
-        double distancePerLayer = config.getDouble("tntDistancePerLayer", 0.04);
-        double maxSpeed = config.getDouble("tntMaxSpeed", 3.5);
-
-        double layerScale = 1.0 + builtLayers * distancePerLayer;
-        double speed = (speedMin + random.nextDouble() * (speedMax - speedMin)) * layerScale;
-        double up = (upMin + random.nextDouble() * (upMax - upMin)) * (1.0 + builtLayers * 0.02);
-        speed = Math.min(maxSpeed, speed);
-
-        double angle = random.nextDouble() * Math.PI * 2;
-        Vector velocity = new Vector(Math.cos(angle) * speed, up, Math.sin(angle) * speed);
-
-        int fuseMin = config.getInt("tntFuseMinTicks", 70);
-        int fuseMax = config.getInt("tntFuseMaxTicks", 160);
-        if (fuseMax < fuseMin) {
-            fuseMax = fuseMin;
-        }
-        int fuse = fuseMin + random.nextInt(fuseMax - fuseMin + 1);
-        fuse += builtLayers / 2;
+        Location target = pickTntTarget(world, config);
+        int fuse = fuseForFlight(launch, target, config);
+        Vector velocity = ballisticVelocity(launch, target, fuse);
 
         TNTPrimed primed = world.spawn(launch, TNTPrimed.class);
         primed.setFuseTicks(fuse);
@@ -926,9 +784,64 @@ public class VolcanoEruptionPhase implements TerrainPhase {
         ArenaEntityUtil.tagVolcanoTnt(plugin, primed);
     }
 
+    private Location pickTntTarget(World world, TerrainPhaseConfig config) {
+        double minR = 14;
+        double maxR = 48;
+        if (activeArena != null) {
+            int cone = 12;
+            if (activeGame != null) {
+                cone = Math.max(cone, getVolcanoGrowthRadius(activeArena, activeGame, config));
+            }
+            minR = Math.max(12, cone * 0.4 + 6);
+            maxR = Math.max(minR + 10, activeArena.getRadius() - 5);
+        }
+        double u = random.nextDouble();
+        double dist = Math.sqrt(minR * minR + u * (maxR * maxR - minR * minR));
+        double angle = random.nextDouble() * Math.PI * 2;
+        double x = cx + Math.cos(angle) * dist + (random.nextDouble() - 0.5) * 6;
+        double z = cz + Math.sin(angle) * dist + (random.nextDouble() - 0.5) * 6;
+        int gx = (int) Math.floor(x);
+        int gz = (int) Math.floor(z);
+        int gy = calderaFloorY;
+        if (world.isChunkLoaded(gx >> 4, gz >> 4)) {
+            gy = VolcanoHeatUtil.findTerrainGroundY(world, gx, gz, calderaFloorY);
+        }
+        return new Location(world, x, gy + 1, z);
+    }
+
+    private int fuseForFlight(Location from, Location to, TerrainPhaseConfig config) {
+        double horiz = Math.hypot(to.getX() - from.getX(), to.getZ() - from.getZ());
+        int min = Math.max(20, config.getInt("tntFuseMinTicks", 35));
+        int max = Math.max(min, config.getInt("tntFuseMaxTicks", 80));
+        int travel = 22 + (int) Math.round(horiz * 0.55);
+        int fuse = Math.max(min, Math.min(max, travel));
+        return fuse + random.nextInt(8);
+    }
+
+    private static Vector ballisticVelocity(Location from, Location to, int ticks) {
+        int t = Math.max(8, ticks);
+        double oneMinusDt = 1.0 - Math.pow(TNT_DRAG, t);
+        if (oneMinusDt < 1.0e-6) {
+            return to.toVector().subtract(from.toVector()).multiply(0.12);
+        }
+        double sumDrag = oneMinusDt / (1.0 - TNT_DRAG);
+        double dx = to.getX() - from.getX();
+        double dy = to.getY() - from.getY();
+        double dz = to.getZ() - from.getZ();
+        double gravityTerm = (TNT_GRAVITY / (1.0 - TNT_DRAG))
+                * (t - TNT_DRAG * oneMinusDt / (1.0 - TNT_DRAG));
+        Vector velocity = new Vector(dx / sumDrag, (dy + gravityTerm) / sumDrag, dz / sumDrag);
+        double maxSpeed = 4.8;
+        double speed = velocity.length();
+        if (speed > maxSpeed) {
+            velocity.multiply(maxSpeed / speed);
+        }
+        return velocity;
+    }
+
     private void trySpawnMobs(World world, Arena arena, TerrainPhaseConfig config, double intensity) {
         int maxMobs = config.getInt("maxHostileMobs", 6);
-        int current = ArenaEntityUtil.countVolcanoMobs(world, arena);
+        int current = countMobsOfTypes(world, arena, LATE_MOBS);
         if (current >= maxMobs) {
             return;
         }
@@ -940,15 +853,46 @@ public class VolcanoEruptionPhase implements TerrainPhase {
         }
 
         int spawnMin = config.getInt("mobSpawnRadiusMin", 10);
-        int spawnMax = config.getInt("mobSpawnRadiusMax", 35);
+        int spawnMax = Math.max(spawnMin + 1, netherSpread.getConvertedRadius());
         EntityType[] pool = clamped >= 0.55 ? LATE_MOBS : EARLY_MOBS;
-        EntityType type = pool[random.nextInt(pool.length)];
-        Location spawn = findMobSpawnLocation(world, arena, spawnMin, spawnMax);
+        EntityType type = pickWeightedMobType(pool, config);
+        if (type == null) {
+            return;
+        }
+        Location spawn = findMobSpawnLocation(world, arena, spawnMin, spawnMax, true);
         if (spawn == null) {
             return;
         }
         LivingEntity mob = (LivingEntity) world.spawnEntity(spawn, type);
         ArenaEntityUtil.tagVolcanoMob(plugin, mob);
+    }
+
+    /**
+     * Picks from the pool using per-type <NAME>_spawnWeight config keys
+     * (default 1.0), so one species can be dialed down without changing the
+     * overall spawn cadence. A weight of 0 disables that mob entirely.
+     */
+    private EntityType pickWeightedMobType(EntityType[] pool, TerrainPhaseConfig config) {
+        double totalWeight = 0.0;
+        for (EntityType type : pool) {
+            totalWeight += getMobSpawnWeight(config, type);
+        }
+        if (totalWeight <= 0.0) {
+            return null;
+        }
+
+        double roll = random.nextDouble() * totalWeight;
+        for (EntityType type : pool) {
+            roll -= getMobSpawnWeight(config, type);
+            if (roll <= 0.0) {
+                return type;
+            }
+        }
+        return null;
+    }
+
+    private double getMobSpawnWeight(TerrainPhaseConfig config, EntityType type) {
+        return Math.max(0.0, config.getDouble(type.name() + "_spawnWeight", 1.0));
     }
 
     private void trySpawnGhasts(World world, Arena arena, TerrainPhaseConfig config, double intensity) {
@@ -990,7 +934,7 @@ public class VolcanoEruptionPhase implements TerrainPhase {
 
     private Location findGhastSpawnLocation(World world, Arena arena, TerrainPhaseConfig config) {
         int minRadius = config.getInt("ghastSpawnRadiusMin", 12);
-        int maxRadius = config.getInt("ghastSpawnRadiusMax", 40);
+        int maxRadius = Math.max(minRadius + 1, netherSpread.getConvertedRadius());
         int minHeight = config.getInt("ghastMinHeightAboveVent", 5);
         int maxHeight = config.getInt("ghastMaxHeightAboveVent", 16);
         int ventY = calderaFloorY + getPeakLayers();
@@ -1002,6 +946,9 @@ public class VolcanoEruptionPhase implements TerrainPhase {
             int z = (int) (cz + Math.sin(angle) * dist);
 
             if (!CircleUtil.isInsideCircle(cx, cz, x, z, arena.getRadius() - 2)) {
+                continue;
+            }
+            if (!netherSpread.contains(x, z)) {
                 continue;
             }
 
@@ -1033,18 +980,62 @@ public class VolcanoEruptionPhase implements TerrainPhase {
         return true;
     }
 
-    private Location findMobSpawnLocation(World world, Arena arena, int minRadius, int maxRadius) {
-        for (int attempt = 0; attempt < 12; attempt++) {
+    private void trySpawnForestMobs(World world, Arena arena, TerrainPhaseConfig config, double intensity) {
+        int maxMobs = config.getInt("maxForestMobs", 6);
+        if (maxMobs <= 0) {
+            return;
+        }
+        int current = countMobsOfTypes(world, arena, FOREST_MOBS);
+        if (current >= maxMobs) {
+            return;
+        }
+
+        double chance = config.getDouble("forestMobSpawnChancePerTick", 0.04);
+        double clamped = Math.min(1.0, intensity / 3.0);
+        if (random.nextDouble() > chance * (0.5 + clamped)) {
+            return;
+        }
+
+        int netherRadius = netherSpread.getConvertedRadius();
+        int spawnMin = Math.max(netherRadius + 2, config.getInt("forestMobSpawnRadiusMin", netherRadius + 4));
+        int spawnMax = Math.max(spawnMin + 1, arena.getRadius() - 4);
+        if (spawnMin >= arena.getRadius() - 3) {
+            return;
+        }
+        EntityType type = FOREST_MOBS[random.nextInt(FOREST_MOBS.length)];
+        Location spawn = findMobSpawnLocation(world, arena, spawnMin, spawnMax, false);
+        if (spawn == null) {
+            return;
+        }
+        LivingEntity mob = (LivingEntity) world.spawnEntity(spawn, type);
+        ArenaEntityUtil.tagPhaseMob(plugin, mob);
+    }
+
+    private int countMobsOfTypes(World world, Arena arena, EntityType[] types) {
+        int total = 0;
+        for (EntityType type : types) {
+            total += ArenaEntityUtil.countVolcanoMobsOfType(world, arena, type);
+        }
+        return total;
+    }
+
+    private Location findMobSpawnLocation(World world, Arena arena, int minRadius, int maxRadius,
+                                          boolean netherGround) {
+        for (int attempt = 0; attempt < 16; attempt++) {
             double angle = random.nextDouble() * Math.PI * 2;
-            double dist = minRadius + random.nextDouble() * (maxRadius - minRadius);
+            double dist = minRadius + random.nextDouble() * Math.max(1, maxRadius - minRadius);
             int x = (int) (cx + Math.cos(angle) * dist);
             int z = (int) (cz + Math.sin(angle) * dist);
             if (!CircleUtil.isInsideCircle(cx, cz, x, z, arena.getRadius() - 2)) {
                 continue;
             }
+            if (netherGround != netherSpread.isConvertedGround(world, x, z)) {
+                continue;
+            }
             int y = findSurfaceY(world, x, (int) arena.getCenterY(), z);
             Block block = world.getBlockAt(x, y, z);
-            if (block.getType().isSolid()) {
+            Block above = world.getBlockAt(x, y + 1, z);
+            if (block.getType().isSolid() && !block.isLiquid() && above.getType().isAir()) {
                 return new Location(world, x + 0.5, y + 1, z + 0.5);
             }
         }
@@ -1152,6 +1143,10 @@ public class VolcanoEruptionPhase implements TerrainPhase {
 
     public boolean isVolcanoGuardianActive() {
         return volcanoGuardian != null && volcanoGuardian.isActive();
+    }
+
+    public VolcanoPiglinHorde getPiglinHorde() {
+        return piglinHorde;
     }
 
     public Location rollUltimatePowerUpLocation(PowerUpDefinition def) {

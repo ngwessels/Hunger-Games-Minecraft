@@ -161,7 +161,7 @@ public final class VolcanoUndergroundGuard {
         long eruptionElapsedSec = plugin.getTerrainPhaseManager().getPhaseElapsedSeconds();
         double growthProgress = getGrowthProgress(plugin, game, eruptionConfig, eruptionElapsedSec);
         int minBase = eruptionConfig.getInt("baseRadius", 8);
-        int maxBase = getMaxConeBaseRadius(arena, eruptionConfig);
+        int maxBase = getMaxConeBaseRadius(arena, game, eruptionConfig);
         double baseGrowthScale = eruptionConfig.getDouble("coneBaseGrowthScale", 0.6);
         int targetBase = minBase + (int) Math.round((maxBase - minBase) * growthProgress * baseGrowthScale);
         return Math.max(VolcanoCaldera.RIM_RADIUS, targetBase);
@@ -183,8 +183,9 @@ public final class VolcanoUndergroundGuard {
         return Math.min(1.0, eruptionElapsedSec / (double) Math.max(1, rampSeconds));
     }
 
-    private static int getMaxConeBaseRadius(Arena arena, TerrainPhaseConfig config) {
-        int arenaEdge = Math.max(1, arena.getRadius() - CONE_ARENA_EDGE_MARGIN);
+    private static int getMaxConeBaseRadius(Arena arena, Game game, TerrainPhaseConfig config) {
+        int forestEdge = game != null ? game.getGameMode().getForestRadius() : arena.getRadius();
+        int arenaEdge = Math.max(1, forestEdge - CONE_ARENA_EDGE_MARGIN);
         int configuredCap = config.getInt("maxConeBaseRadius", 0);
         if (configuredCap > 0) {
             return Math.min(arenaEdge, configuredCap);

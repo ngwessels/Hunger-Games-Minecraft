@@ -11,7 +11,6 @@ public class PluginConfig {
     private int blocksPerTick;
     private int wallThickness;
     private int baseTerrainY;
-    private int defaultWallHeight;
     private int defaultCountdown;
     private int defaultGracePeriod;
     private int respawnGraceSeconds;
@@ -20,6 +19,7 @@ public class PluginConfig {
     private boolean endOnLastSurvivor;
     private int killsToWin;
     private int deathsToSpectate;
+    private int rejoinTimeoutSeconds;
     private int defaultMaxMatchSeconds;
     private double lavaFlowSpeedMultiplier;
     private double matchHealMultiplier;
@@ -51,6 +51,8 @@ public class PluginConfig {
     private double powerUpUltimateSpawnChance;
     private int powerUpBeaconBeamHeightBlocks;
     private int powerUpBeaconBeamIntervalTicks;
+    private boolean powerUpBeaconBeamEnabled;
+    private Material powerUpBeaconPedestalMaterial;
 
     public PluginConfig(HungerGamesPlugin plugin) {
         this.plugin = plugin;
@@ -65,7 +67,6 @@ public class PluginConfig {
         blocksPerTick = config.getInt("generation.blocks-per-tick", 4000);
         wallThickness = config.getInt("generation.wall-thickness", 4);
         baseTerrainY = config.getInt("generation.base-terrain-y", 20);
-        defaultWallHeight = config.getInt("generation.default-wall-height", 21);
         defaultCountdown = config.getInt("game.default-countdown", 10);
         defaultGracePeriod = config.getInt("game.default-grace-period", 30);
         respawnGraceSeconds = config.getInt("game.respawn-grace-seconds", 5);
@@ -74,6 +75,7 @@ public class PluginConfig {
         endOnLastSurvivor = config.getBoolean("game.end-on-last-survivor", true);
         killsToWin = config.getInt("game.kills-to-win", 10);
         deathsToSpectate = config.getInt("game.deaths-to-spectate", 10);
+        rejoinTimeoutSeconds = config.getInt("game.rejoin-timeout-seconds", 90);
         defaultMaxMatchSeconds = config.getInt("game.default-max-match-seconds", 0);
         lavaFlowSpeedMultiplier = config.getDouble("game.lava-flow-speed-multiplier", 1.5);
         matchHealMultiplier = config.getDouble("game.match-heal-multiplier", 2.0);
@@ -108,6 +110,22 @@ public class PluginConfig {
         powerUpUltimateSpawnChance = config.getDouble("powerups.ultimate-spawn-chance", 0.15);
         powerUpBeaconBeamHeightBlocks = config.getInt("powerups.beacon-beam-height-blocks", 80);
         powerUpBeaconBeamIntervalTicks = config.getInt("powerups.beacon-beam-interval-ticks", 4);
+        powerUpBeaconBeamEnabled = config.getBoolean("powerups.real-beacon-beam.enabled", true);
+        String pedestalMaterial = config.getString("powerups.real-beacon-beam.pedestal-material", "IRON_BLOCK");
+        Material pedestalType = Material.matchMaterial(pedestalMaterial);
+        powerUpBeaconPedestalMaterial = isBeaconPyramidMaterial(pedestalType)
+                ? pedestalType
+                : Material.IRON_BLOCK;
+    }
+
+    private boolean isBeaconPyramidMaterial(Material material) {
+        if (material == null) {
+            return false;
+        }
+        return switch (material) {
+            case IRON_BLOCK, GOLD_BLOCK, EMERALD_BLOCK, DIAMOND_BLOCK, NETHERITE_BLOCK -> true;
+            default -> false;
+        };
     }
 
     public int getBlocksPerTick() {
@@ -120,10 +138,6 @@ public class PluginConfig {
 
     public int getBaseTerrainY() {
         return baseTerrainY;
-    }
-
-    public int getDefaultWallHeight() {
-        return defaultWallHeight;
     }
 
     public int getDefaultCountdown() {
@@ -156,6 +170,10 @@ public class PluginConfig {
 
     public int getDeathsToSpectate() {
         return deathsToSpectate;
+    }
+
+    public int getRejoinTimeoutSeconds() {
+        return rejoinTimeoutSeconds;
     }
 
     public int getDefaultMaxMatchSeconds() {
@@ -272,5 +290,13 @@ public class PluginConfig {
 
     public int getPowerUpBeaconBeamIntervalTicks() {
         return powerUpBeaconBeamIntervalTicks;
+    }
+
+    public boolean isPowerUpBeaconBeamEnabled() {
+        return powerUpBeaconBeamEnabled;
+    }
+
+    public Material getPowerUpBeaconPedestalMaterial() {
+        return powerUpBeaconPedestalMaterial;
     }
 }

@@ -35,7 +35,7 @@ public final class SimulationTestTarget {
                     PersistentDataType.STRING,
                     game.getArena().getName().toLowerCase()
             );
-            var maxHealth = entity.getAttribute(Attribute.GENERIC_MAX_HEALTH);
+            var maxHealth = entity.getAttribute(Attribute.MAX_HEALTH);
             if (maxHealth != null) {
                 maxHealth.setBaseValue(MAX_HEALTH);
             }

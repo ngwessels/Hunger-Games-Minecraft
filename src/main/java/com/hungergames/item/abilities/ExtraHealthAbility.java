@@ -27,7 +27,7 @@ public class ExtraHealthAbility implements CustomItemAbility {
     @Override
     public void applyPassive(Player player, CustomItemDefinition definition) {
         int bonusHearts = definition.getInt("bonusHearts", 4);
-        AttributeInstance health = player.getAttribute(Attribute.GENERIC_MAX_HEALTH);
+        AttributeInstance health = player.getAttribute(Attribute.MAX_HEALTH);
         if (health == null) {
             return;
         }
@@ -43,7 +43,7 @@ public class ExtraHealthAbility implements CustomItemAbility {
 
     @Override
     public void removePassive(Player player, CustomItemDefinition definition) {
-        AttributeInstance health = player.getAttribute(Attribute.GENERIC_MAX_HEALTH);
+        AttributeInstance health = player.getAttribute(Attribute.MAX_HEALTH);
         if (health == null) {
             return;
         }

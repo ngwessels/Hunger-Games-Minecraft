@@ -22,19 +22,38 @@ public final class VolcanoHeatUtil {
     }
 
     public static boolean isHotVolcanoBlock(Material type) {
-        return type == Material.NETHERRACK
+        return type == Material.LAVA
+                || type == Material.NETHERRACK
                 || type == Material.MAGMA_BLOCK
                 || type == Material.BLACKSTONE;
     }
 
     public static boolean isFlammableTreeBlock(Material type) {
+        if (isNetherVegetation(type)
+                || type == Material.CRIMSON_STEM || type == Material.WARPED_STEM
+                || type == Material.CRIMSON_HYPHAE || type == Material.WARPED_HYPHAE
+                || type == Material.STRIPPED_CRIMSON_STEM || type == Material.STRIPPED_WARPED_STEM
+                || type == Material.STRIPPED_CRIMSON_HYPHAE || type == Material.STRIPPED_WARPED_HYPHAE
+                || type == Material.NETHER_WART_BLOCK || type == Material.WARPED_WART_BLOCK) {
+            return false;
+        }
         return Tag.LOGS.isTagged(type) || Tag.LEAVES.isTagged(type);
     }
 
     public static boolean isFoliage(Material type) {
         return Tag.LOGS.isTagged(type) || Tag.LEAVES.isTagged(type)
+                || isNetherVegetation(type)
                 || type == Material.TALL_GRASS || type == Material.SHORT_GRASS
                 || type == Material.DEAD_BUSH || type == Material.FIRE;
+    }
+
+    public static boolean isNetherVegetation(Material type) {
+        return type == Material.NETHER_WART_BLOCK || type == Material.WARPED_WART_BLOCK
+                || type == Material.SHROOMLIGHT
+                || type == Material.WEEPING_VINES || type == Material.TWISTING_VINES
+                || type == Material.CRIMSON_ROOTS || type == Material.WARPED_ROOTS
+                || type == Material.NETHER_SPROUTS
+                || type == Material.CRIMSON_FUNGUS || type == Material.WARPED_FUNGUS;
     }
 
     /** Top solid block in a column, ignoring logs, leaves, and other foliage. */
@@ -44,9 +63,48 @@ public final class VolcanoHeatUtil {
             if (!type.isSolid() || type == Material.LAVA || isFoliage(type)) {
                 continue;
             }
+            if (isFloatingSkySolid(world, x, y, z)) {
+                continue;
+            }
             return y;
         }
         return scanBaseY;
+    }
+
+    /**
+     * Glowstone clumps and netherrack sky islands sit on air; skip them so
+     * ground scans still land on the forest / nether floor.
+     */
+    private static boolean isFloatingSkySolid(World world, int x, int y, int z) {
+        int yMin = Math.max(1, y - 14);
+        int solidBottom = y;
+        for (int yy = y - 1; yy >= yMin; yy--) {
+            Material type = world.getBlockAt(x, yy, z).getType();
+            if (!type.isSolid() || type == Material.LAVA || isFoliage(type)) {
+                solidBottom = yy + 1;
+                break;
+            }
+            if (yy == yMin) {
+                return false;
+            }
+        }
+        if (y - solidBottom + 1 > 12) {
+            return false;
+        }
+        int airGap = 0;
+        int gapMin = Math.max(1, solidBottom - 10);
+        for (int yy = solidBottom - 1; yy >= gapMin; yy--) {
+            Material type = world.getBlockAt(x, yy, z).getType();
+            if (type.isAir()) {
+                airGap++;
+                continue;
+            }
+            if (isFoliage(type)) {
+                continue;
+            }
+            break;
+        }
+        return airGap >= 3;
     }
 
     /** Ignite wood/leaves touching a newly placed hot volcano block. */

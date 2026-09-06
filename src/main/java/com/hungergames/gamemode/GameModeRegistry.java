@@ -37,6 +37,10 @@ public class GameModeRegistry {
 
         for (File file : files) {
             YamlConfiguration config = YamlConfiguration.loadConfiguration(file);
+            // Stale on-disk files predate newer sections (e.g. settlements);
+            // merge the shipped defaults so new features activate without
+            // wiping any settings the user customized.
+            copyDefaultsForMissingSections(file, config);
             String id = config.getString("id", file.getName().replace(".yml", ""));
             GameMode mode = new GameMode(id);
             mode.setDisplayName(config.getString("displayName", id));
@@ -48,6 +52,7 @@ public class GameModeRegistry {
             mode.setLootTier(config.getString("lootTier", "normal"));
             mode.setLootBoxDensity(config.getString("lootBoxDensity", "medium"));
             mode.setInitialTerrain(config.getString("initialTerrain", "forest"));
+            mode.setArenaRadius(config.getInt("arenaRadius", 300));
 
             try {
                 mode.setDifficulty(Difficulty.valueOf(config.getString("difficulty", "NORMAL").toUpperCase()));
@@ -86,6 +91,13 @@ public class GameModeRegistry {
             } else {
                 mode.setTreePlacement(TreePlacementConfig.forInitialTerrain(mode.getInitialTerrain()));
             }
+
+            mode.setJungleGrove(JungleGroveConfig.fromYaml(config.getConfigurationSection("jungleGrove")));
+            mode.setPonds(PondConfig.fromYaml(config.getConfigurationSection("ponds")));
+            mode.setSettlement(SettlementConfig.fromYaml(config.getConfigurationSection("settlements")));
+            mode.setRage(RageConfig.fromYaml(config.getConfigurationSection("rage")));
+            mode.setArctic(ArcticConfig.fromYaml(config.getConfigurationSection("arctic")));
+            mode.setComet(CometConfig.fromYaml(config.getConfigurationSection("comet")));
 
             modes.put(id.toLowerCase(), mode);
         }
@@ -129,6 +141,33 @@ public class GameModeRegistry {
         };
         for (String name : defaults) {
             plugin.saveResource("gamemodes/" + name, false);
+        }
+    }
+
+    /** Copies top-level sections from the shipped jar default that are absent on disk. */
+    private void copyDefaultsForMissingSections(File file, YamlConfiguration config) {
+        String resourceName = "gamemodes/" + file.getName();
+        if (plugin.getResource(resourceName) == null) {
+            return;
+        }
+        try (java.io.InputStream in = plugin.getResource(resourceName)) {
+            YamlConfiguration defaults = YamlConfiguration.loadConfiguration(
+                    new java.io.InputStreamReader(in, java.nio.charset.StandardCharsets.UTF_8));
+            boolean changed = false;
+            for (String key : defaults.getKeys(true)) {
+                if (!key.contains(".") && !config.isSet(key)) {
+                    config.set(key, defaults.get(key));
+                    changed = true;
+                }
+            }
+            if (changed) {
+                config.save(file);
+                plugin.getLogger().info("Merged new default sections into " + file.getName()
+                        + " (e.g. settlements).");
+            }
+        } catch (Exception e) {
+            plugin.getLogger().warning("Could not merge defaults into " + file.getName()
+                    + ": " + e.getMessage());
         }
     }
 

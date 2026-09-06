@@ -1,5 +1,6 @@
 package com.hungergames;
 
+import com.hungergames.arena.Arena;
 import com.hungergames.arena.ArenaGenerator;
 import com.hungergames.arena.ArenaManager;
 import com.hungergames.command.HgCommand;
@@ -13,11 +14,17 @@ import com.hungergames.listener.CustomItemListener;
 import com.hungergames.listener.GameListener;
 import com.hungergames.listener.GuardianPilotListener;
 import com.hungergames.loot.LootBoxManager;
+import com.hungergames.game.CurseManager;
+import com.hungergames.game.RageManager;
+import com.hungergames.game.SettlementManager;
+import com.hungergames.game.ArcticManager;
 import com.hungergames.powerup.PowerUpManager;
 import com.hungergames.powerup.PowerUpRegistry;
 import com.hungergames.terrain.BlockMutationQueue;
 import com.hungergames.terrain.LavaFlowAccelerator;
 import com.hungergames.terrain.TerrainPhaseManager;
+import com.hungergames.terrain.VolcanoComet;
+import com.hungergames.util.ArenaEntityUtil;
 import com.hungergames.util.ColorUtil;
 import org.bukkit.plugin.java.JavaPlugin;
 
@@ -35,6 +42,11 @@ public class HungerGamesPlugin extends JavaPlugin {
     private CustomItemRegistry customItemRegistry;
     private PowerUpRegistry powerUpRegistry;
     private PowerUpManager powerUpManager;
+    private SettlementManager settlementManager;
+    private ArcticManager arcticManager;
+    private VolcanoComet volcanoComet;
+    private CurseManager curseManager;
+    private RageManager rageManager;
     private ArenaGenerator arenaGenerator;
     private CustomItemListener customItemListener;
     private GuardianPilotListener guardianPilotListener;
@@ -49,6 +61,12 @@ public class HungerGamesPlugin extends JavaPlugin {
         customItemRegistry = new CustomItemRegistry(this);
         powerUpRegistry = new PowerUpRegistry(this);
         powerUpManager = new PowerUpManager(this);
+        settlementManager = new SettlementManager(this);
+        arcticManager = new ArcticManager(this);
+        volcanoComet = new VolcanoComet(this);
+        curseManager = new CurseManager(this);
+        curseManager.start();
+        rageManager = new RageManager(this);
         lootBoxManager = new LootBoxManager(this);
         blockMutationQueue = new BlockMutationQueue(this);
         terrainPhaseManager = new TerrainPhaseManager(this);
@@ -68,6 +86,10 @@ public class HungerGamesPlugin extends JavaPlugin {
         getServer().getPluginManager().registerEvents(customItemListener, this);
         getServer().getPluginManager().registerEvents(guardianPilotListener, this);
 
+        for (Arena arena : arenaManager.getArenas()) {
+            ArenaEntityUtil.suppressVanillaMonsterSpawning(arena.getWorld());
+        }
+
         getLogger().info("HungerGames enabled!");
     }
 
@@ -75,6 +97,12 @@ public class HungerGamesPlugin extends JavaPlugin {
     public void onDisable() {
         if (lavaFlowAccelerator != null) {
             lavaFlowAccelerator.shutdown();
+        }
+        if (curseManager != null) {
+            curseManager.shutdown();
+        }
+        if (volcanoComet != null) {
+            volcanoComet.destroy();
         }
         if (gameManager != null) {
             gameManager.shutdown();
@@ -137,6 +165,26 @@ public class HungerGamesPlugin extends JavaPlugin {
 
     public PowerUpManager getPowerUpManager() {
         return powerUpManager;
+    }
+
+    public SettlementManager getSettlementManager() {
+        return settlementManager;
+    }
+
+    public ArcticManager getArcticManager() {
+        return arcticManager;
+    }
+
+    public VolcanoComet getVolcanoComet() {
+        return volcanoComet;
+    }
+
+    public CurseManager getCurseManager() {
+        return curseManager;
+    }
+
+    public RageManager getRageManager() {
+        return rageManager;
     }
 
     public CustomItemListener getCustomItemListener() {

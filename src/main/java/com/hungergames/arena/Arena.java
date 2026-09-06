@@ -21,13 +21,19 @@ public class Arena {
     private int terrainSeed;
     private final List<Location> spawnPoints = new ArrayList<>();
     private Location centerSpawn;
+    /** Transient settlement data (not persisted): chest sites + mob spawn points. */
+    private final SettlementLayout settlementLayout = new SettlementLayout();
+    private final ArcticLayout arcticLayout = new ArcticLayout();
 
     public static final double DEFAULT_CENTER_X = 0;
     public static final double DEFAULT_CENTER_Y = 20;
     public static final double DEFAULT_CENTER_Z = 0;
+    /** Default playable radius for modes that omit arenaRadius. */
+    public static final int RADIUS = 300;
+    /** Fixed arena wall height in blocks; not configurable per arena. */
+    public static final int WALL_HEIGHT = 20;
     /** Previous default before terrain height reduction; used for arena migration. */
     public static final double LEGACY_CENTER_Y = 64;
-    public static final int LEGACY_WALL_HEIGHT = 64;
 
     public Arena(String name) {
         this.name = name;
@@ -35,7 +41,8 @@ public class Arena {
         this.centerX = DEFAULT_CENTER_X;
         this.centerY = DEFAULT_CENTER_Y;
         this.centerZ = DEFAULT_CENTER_Z;
-        this.wallHeight = 21;
+        this.radius = RADIUS;
+        this.wallHeight = WALL_HEIGHT;
         this.gameModeId = "standard";
         this.terrainSeed = name.hashCode();
     }
@@ -75,15 +82,15 @@ public class Arena {
     }
 
     public void setRadius(int radius) {
-        this.radius = radius;
+        this.radius = Math.max(20, radius);
     }
 
     public int getWallHeight() {
         return wallHeight;
     }
 
-    public void setWallHeight(int wallHeight) {
-        this.wallHeight = wallHeight;
+    public void setWallHeight(int ignored) {
+        this.wallHeight = WALL_HEIGHT;
     }
 
     public String getGameModeId() {
@@ -125,6 +132,14 @@ public class Arena {
 
     public void setCenterSpawn(Location centerSpawn) {
         this.centerSpawn = centerSpawn;
+    }
+
+    public SettlementLayout getSettlementLayout() {
+        return settlementLayout;
+    }
+
+    public ArcticLayout getArcticLayout() {
+        return arcticLayout;
     }
 
     public Location getCenterLocation() {

@@ -2,7 +2,6 @@ generation:
   blocks-per-tick: 4000
   wall-thickness: 4
   base-terrain-y: 20
-  default-wall-height: 21
 
 game:
   default-countdown: 10
@@ -16,6 +15,8 @@ game:
   kills-to-win: 10
   # After this many deaths a player is out for the match (spectator or /hg leave). Set to 0 for unlimited respawns.
   deaths-to-spectate: 10
+  # Seconds a disconnected player has to /hg rejoin before they are eliminated. 0 = until the match ends.
+  rejoin-timeout-seconds: 90
   # Fallback match time limit (seconds) when a gamemode omits maxMatchSeconds. 0 = no limit.
   default-max-match-seconds: 0
   # Multiplier for how quickly lava spreads during matches (1.5 = 50% faster).
@@ -56,6 +57,14 @@ powerups:
   ultimate-spawn-chance: 0.15
   beacon-beam-height-blocks: 80
   beacon-beam-interval-ticks: 4
+  # Places a temporary beacon block (on a small mineral pedestal) at each landed
+  # power-up so the vanilla light beam is visible from anywhere in the arena.
+  # The terrain is restored when the power-up despawns or is picked up.
+  real-beacon-beam:
+    enabled: true
+    # Any valid beacon base material: IRON_BLOCK, GOLD_BLOCK, EMERALD_BLOCK,
+    # DIAMOND_BLOCK, NETHERITE_BLOCK.
+    pedestal-material: IRON_BLOCK
 
 messages:
   prefix: "&6[HG] &r"
