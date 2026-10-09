@@ -241,6 +241,7 @@ public class VolcanoEruptionPhase implements TerrainPhase {
             volcanoGuardian.destroy();
             volcanoGuardian = null;
         }
+        arcticMeltSurge.reset();
         World world = arena.getWorld();
         if (world != null) {
             ArenaEntityUtil.clearVolcanoEntities(world, arena);

@@ -159,9 +159,19 @@ terrainPhases:
     biomeWarFreezeColumnsPerTick: 400
     biomeWarRecaptureColumnsPerTick: 56
     arcticMeltLagBlocks: 10
-    arcticTsunamiInlandBlocks: 16
-    arcticTsunamiDurationTicks: 40
-    arcticTsunamiMinHeight: 2
+    # 0 = auto (glacier toward caldera, stopping at the rim). Traveling wave, not a pulse.
+    arcticTsunamiInlandBlocks: 0
+    # Launch when the lava front is this far from the glacier so ice remains to run over.
+    arcticTsunamiLeadBlocks: 100
+    arcticTsunamiSpeedBlocksPerTick: 2
+    arcticTsunamiRecedeSpeedBlocksPerTick: 3
+    arcticTsunamiWaveLengthBlocks: 12
+    arcticTsunamiTickInterval: 1
+    arcticTsunamiBlocksPerTick: 180
+    arcticTsunamiMaxConcurrent: 3
+    # Hold at max inland before the water pulls back to sea.
+    arcticTsunamiDurationTicks: 16
+    arcticTsunamiMinHeight: 3
     arcticTsunamiMaxHeight: 10
     arcticCalvingFallingIce: 5
     # Floating glowstone blobs in converted nether, like nether-cavern veins

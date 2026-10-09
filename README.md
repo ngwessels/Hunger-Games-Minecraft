@@ -140,6 +140,21 @@ Use `initialTerrain: volcano` when creating custom modes that share this arena l
 
 Players are not assigned a faction. Piglin horde hunt-locks still override faction targeting.
 
+#### Glacier tsunamis
+
+When the lava front nears a glacier, ice calves and a water wall forms offshore, then **advances inland each tick** and recedes. Water is placed with physics off (batched) and snapshots are restored on recede or match reset.
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `arcticTsunamiInlandBlocks` | `0` | Max inland steps; `0` = glacier to caldera rim |
+| `arcticTsunamiLeadBlocks` | `100` | Launch when lava is this far from the glacier |
+| `arcticTsunamiSpeedBlocksPerTick` | `2` | Crest advance (path slices / tick) |
+| `arcticTsunamiRecedeSpeedBlocksPerTick` | `3` | Pull-back speed |
+| `arcticTsunamiWaveLengthBlocks` | `12` | Thickness of the moving wall |
+| `arcticTsunamiDurationTicks` | `16` | Pause at max inland before receding |
+| `arcticTsunamiMinHeight` / `MaxHeight` | `3` / `10` | Wall height (mostly min, rare spikes) |
+| `arcticTsunamiMaxConcurrent` | `3` | Simultaneous waves |
+
 #### Volcano TNT
 
 Rate is exponential in volcano/biome progress (phase tick is 1 Hz, so these are TNT/sec), spread is area-uniform in a widening disc, and live TNT is capped.
