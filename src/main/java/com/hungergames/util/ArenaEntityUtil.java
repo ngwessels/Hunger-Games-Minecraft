@@ -41,6 +41,8 @@ public final class ArenaEntityUtil {
     public static final NamespacedKey PLAYER_PILOT_GUARDIAN_KEY = new NamespacedKey("hungergames", "player_pilot_guardian");
     public static final NamespacedKey SETTLEMENT_MOB_KEY = new NamespacedKey("hungergames", "settlement_mob");
     public static final NamespacedKey ARCTIC_MOB_KEY = new NamespacedKey("hungergames", "arctic_mob");
+    public static final NamespacedKey FACTION_ICE_KEY = new NamespacedKey("hungergames", "faction_ice");
+    public static final NamespacedKey FACTION_VOLCANO_KEY = new NamespacedKey("hungergames", "faction_volcano");
     public static final NamespacedKey COMET_KEY = new NamespacedKey("hungergames", "volcano_comet");
     public static final NamespacedKey BEAST_FORM_KEY = new NamespacedKey("hungergames", "beast_form");
     public static final NamespacedKey BEAST_CAMERA_KEY = new NamespacedKey("hungergames", "beast_camera");
@@ -279,6 +281,29 @@ public final class ArenaEntityUtil {
         return living.getPersistentDataContainer().has(ARCTIC_MOB_KEY, PersistentDataType.BYTE);
     }
 
+    public static void tagIceFactionMob(Plugin plugin, LivingEntity entity) {
+        entity.getPersistentDataContainer().set(FACTION_ICE_KEY, PersistentDataType.BYTE, (byte) 1);
+        tagPhaseMob(plugin, entity);
+    }
+
+    public static boolean isIceFactionMob(LivingEntity living) {
+        return living.getPersistentDataContainer().has(FACTION_ICE_KEY, PersistentDataType.BYTE);
+    }
+
+    public static void tagVolcanoFactionMob(Plugin plugin, LivingEntity entity) {
+        entity.getPersistentDataContainer().set(FACTION_VOLCANO_KEY, PersistentDataType.BYTE, (byte) 1);
+        tagVolcanoMob(plugin, entity);
+    }
+
+    public static boolean isVolcanoFactionMob(LivingEntity living) {
+        return living.getPersistentDataContainer().has(FACTION_VOLCANO_KEY, PersistentDataType.BYTE);
+    }
+
+    /** Faction army plus piglin horde — ice units hunt both. */
+    public static boolean isVolcanoAlignedMob(LivingEntity living) {
+        return isVolcanoFactionMob(living) || isVolcanoPiglin(living);
+    }
+
     public static void tagComet(Plugin plugin, Entity entity) {
         entity.getPersistentDataContainer().set(COMET_KEY, PersistentDataType.BYTE, (byte) 1);
     }
@@ -386,6 +411,83 @@ public final class ArenaEntityUtil {
 
     public static int countVolcanoMobsOfType(World world, Arena arena, EntityType type) {
         return countPhaseMobsOfType(world, arena, type);
+    }
+
+    public static int countFactionMobs(World world, Arena arena, boolean iceFaction) {
+        if (world == null || arena == null) {
+            return 0;
+        }
+        double cx = arena.getCenterX();
+        double cz = arena.getCenterZ();
+        double maxDist = arena.getRadius() + 5;
+        int count = 0;
+        for (Entity entity : world.getEntities()) {
+            if (!(entity instanceof LivingEntity living) || living.isDead()) {
+                continue;
+            }
+            if (!isNearArena(entity.getLocation(), cx, cz, maxDist)) {
+                continue;
+            }
+            if (iceFaction ? isIceFactionMob(living) : isVolcanoFactionMob(living)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    public static int countVolcanoTnt(World world, Arena arena) {
+        if (world == null || arena == null) {
+            return 0;
+        }
+        double cx = arena.getCenterX();
+        double cz = arena.getCenterZ();
+        double maxDist = arena.getRadius() + 5;
+        int count = 0;
+        for (Entity entity : world.getEntitiesByClass(TNTPrimed.class)) {
+            if (!isNearArena(entity.getLocation(), cx, cz, maxDist)) {
+                continue;
+            }
+            if (isVolcanoTnt((TNTPrimed) entity)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /**
+     * True for hostiles that must survive the peaceful opening (simulation dummy,
+     * cursed beast forms). Villagers are not {@link Enemy} and are left alone.
+     */
+    public static boolean isPeacefulStartExempt(LivingEntity living) {
+        return isBeastForm(living)
+                || isPlayerPilotGuardian(living)
+                || living.getPersistentDataContainer().has(SIMULATION_TARGET_KEY, PersistentDataType.STRING);
+    }
+
+    /**
+     * Removes every hostile in the arena except peaceful-start exempts. Used at
+     * grace and FOREST start so leftover or plugin-spawned armies are gone
+     * before the volcano phase.
+     */
+    public static void clearPeacefulStartHostiles(World world, Arena arena) {
+        if (world == null || arena == null) {
+            return;
+        }
+        double cx = arena.getCenterX();
+        double cz = arena.getCenterZ();
+        double maxDist = arena.getRadius() + 5;
+        for (Entity entity : world.getEntities()) {
+            if (!isHostileMob(entity) || !(entity instanceof LivingEntity living)) {
+                continue;
+            }
+            if (!isNearArena(entity.getLocation(), cx, cz, maxDist)) {
+                continue;
+            }
+            if (isPeacefulStartExempt(living)) {
+                continue;
+            }
+            living.remove();
+        }
     }
 
     private static boolean isNearArena(org.bukkit.Location loc, double cx, double cz, double maxDist) {

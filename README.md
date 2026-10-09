@@ -105,9 +105,55 @@ Set an arena to volcano mode before generating:
 /hg arena generate <name>
 ```
 
-The arena center starts as a **lava caldera** (no center cornucopia). Loot chests are scattered across the arena at match start, always placed on solid ground above the lava zone. During the match, the `VOLCANO_ERUPTION` phase progressively builds a cone, launches lava and TNT projectiles, and spawns hostile nether mobs near the vent as intensity increases.
+The arena center starts as a **lava caldera** (no center cornucopia). With `arctic.iceWorldStart: true` (the volcano default) the rest of the disc generates as ice, glaciers, and snow; `forestRadius` still places the spawn ring and settlements. Loot chests are scattered at match start on solid ground above the lava zone.
+
+During the match, `VOLCANO_ERUPTION` builds the cone, converts ice to nether, launches TNT, and runs two mob factions. A decaying sine on match progress makes ice recapture ground (tug-of-war) until the last ~8% of the timer, when the volcano wins and no ice remains. Between games the arena is restored from the saved world copy.
+
+Hostile mobs (vanilla, spawners, plugin armies, faction units) stay off during grace and the opening `FOREST` phase. They start when the eruption/nether phase begins.
 
 Use `initialTerrain: volcano` when creating custom modes that share this arena layout.
+
+#### Volcano biome war (`VOLCANO_ERUPTION` keys)
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `biomeWarEnabled` | `1` | Ice/volcano tug-of-war |
+| `biomeWarProgressPower` | `1.15` | Curve of volcanic trend vs time (`1` = linear) |
+| `biomeWarOscillationCycles` | `3.0` | Ice comeback pulses over the match |
+| `biomeWarOscillationAmplitude` | `0.22` | How far ice can push the front back |
+| `biomeWarOscillationDampening` | `1.4` | Pulses fade as the match ends |
+| `biomeWarIceGoneMatchRatio` | `0.92` | After this match fraction, remaining ice is forced out |
+| `biomeWarIceRecaptureEnabled` | `1` | Convert nether back to ice when the front retreats |
+| `biomeWarFreezeColumnsPerTick` | `400` | Batched ice freeze (20 Hz, existing forest templates) |
+| `biomeWarRecaptureColumnsPerTick` | `56` | Batched ice recapture |
+
+#### Ice vs volcano factions
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `factionWarEnabled` | `1` | Two armies that fight each other |
+| `iceFactionMaxMobsStart` / `End` | `12` / `0` | Ice cap vs volcanic dominance |
+| `volcanoFactionMaxMobsStart` / `End` | `3` / `14` | Volcano cap vs volcanic dominance |
+| `iceFactionMobs` | polar bear, stray, wolf | Ice roster |
+| `volcanoFactionMobs` | blaze, magma cube, wither skeleton, piglin brute, hoglin | Volcano roster |
+| `factionAggroRange` | `28` | Rival search radius |
+
+Players are not assigned a faction. Piglin horde hunt-locks still override faction targeting.
+
+#### Volcano TNT
+
+Rate is exponential in volcano/biome progress (phase tick is 1 Hz, so these are TNT/sec), spread is area-uniform in a widening disc, and live TNT is capped.
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `projectileRatePerSecondMin` / `Max` | `2` / `16` | Endpoints of the exponential curve |
+| `projectileRateExponent` | `2.4` | Higher = quieter early, heavier late |
+| `projectileMaxPerTick` | `10` | Hard cap per second |
+| `maxActiveVolcanoTnt` | `28` | Live primed-TNT cap |
+| `projectileSpreadRadiusStart` | `40` | Early-game landing disc |
+| `projectileSpreadRadiusEnd` | `0` | `0` = arena edge; grows over the match |
+| `tntFuseMaxTicksEnd` | `170` | Late-game fuse so shots can reach the rim |
+| `tntMaxSpeedEnd` | `8.4` | Late-game ballistic cap |
 
 ### Creating a Custom Game Mode
 

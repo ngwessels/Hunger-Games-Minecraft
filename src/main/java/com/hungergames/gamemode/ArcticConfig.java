@@ -3,11 +3,14 @@ package com.hungergames.gamemode;
 import org.bukkit.configuration.ConfigurationSection;
 
 /**
- * Outer frozen ring on volcano arenas: ice/glaciers beyond the forest radius.
+ * Frozen terrain on volcano arenas. With {@code iceWorldStart}, the whole
+ * playable disc except the caldera generates as ice; otherwise ice is an
+ * outer ring beyond {@code forestRadius}.
  */
 public class ArcticConfig {
 
     private boolean enabled;
+    private boolean iceWorldStart;
     private int forestRadius = 300;
     private int blendWidth = 12;
     private int polarBearCount = 8;
@@ -20,6 +23,7 @@ public class ArcticConfig {
             return config;
         }
         config.enabled = section.getBoolean("enabled", false);
+        config.iceWorldStart = section.getBoolean("iceWorldStart", false);
         config.forestRadius = Math.max(20, section.getInt("forestRadius", 300));
         config.blendWidth = Math.max(4, section.getInt("blendWidth", 12));
         config.polarBearCount = Math.max(0, section.getInt("polarBearCount", 8));
@@ -34,6 +38,11 @@ public class ArcticConfig {
 
     public void setEnabled(boolean enabled) {
         this.enabled = enabled;
+    }
+
+    /** When true, the inner forest is ice at generation, not just the outer ring. */
+    public boolean isIceWorldStart() {
+        return iceWorldStart;
     }
 
     public int getForestRadius() {

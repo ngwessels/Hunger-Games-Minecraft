@@ -6,6 +6,8 @@ import com.hungergames.arena.ArcticRing;
 import com.hungergames.arena.Arena;
 import com.hungergames.gamemode.ArcticConfig;
 import com.hungergames.gamemode.GameMode;
+import com.hungergames.gamemode.TerrainPhaseConfig;
+import com.hungergames.terrain.VolcanoBiomeFactions;
 import com.hungergames.util.ArenaEntityUtil;
 import org.bukkit.Chunk;
 import org.bukkit.Location;
@@ -16,17 +18,20 @@ import org.bukkit.entity.Player;
 import org.bukkit.entity.PolarBear;
 
 /**
- * Spawns tagged adult polar bears at grace and keeps them hunting match players.
+ * Polar bears for volcano arctic rings. They wait until hostile spawning is
+ * allowed (after FOREST). Faction-war volcano matches spawn ice units instead.
  */
 public class ArcticManager {
 
     private final HungerGamesPlugin plugin;
+    private boolean bearsSpawned;
 
     public ArcticManager(HungerGamesPlugin plugin) {
         this.plugin = plugin;
     }
 
     public void onGraceStart(Game game) {
+        bearsSpawned = false;
         GameMode mode = game.getGameMode();
         Arena arena = game.getArena();
         if (!ArcticRing.isActive(arena, mode)) {
@@ -37,11 +42,10 @@ public class ArcticManager {
             return;
         }
         ArcticRing.refreshLayout(arena, mode);
-        ArcticConfig config = mode.getArctic();
-        double follow = Math.max(24.0, config.getPolarBearAggroRange() * 1.5);
-        for (ArcticLayout.Site site : arena.getArcticLayout().getPolarBearSites()) {
-            spawnBear(world, site, follow);
-        }
+    }
+
+    public void clear() {
+        bearsSpawned = false;
     }
 
     /** Retarget bears that lost interest, including at close range. */
@@ -58,7 +62,20 @@ public class ArcticManager {
         if (world == null) {
             return;
         }
+        if (usesFactionWar(mode)) {
+            return;
+        }
+        if (!plugin.getTerrainPhaseManager().allowsHostileSpawning(game)) {
+            return;
+        }
         ArcticConfig config = mode.getArctic();
+        if (!bearsSpawned) {
+            double follow = Math.max(24.0, config.getPolarBearAggroRange() * 1.5);
+            for (ArcticLayout.Site site : arena.getArcticLayout().getPolarBearSites()) {
+                spawnBear(world, site, follow);
+            }
+            bearsSpawned = true;
+        }
         double range = config.getPolarBearAggroRange();
         double rangeSq = range * range;
         for (PolarBear bear : world.getEntitiesByClass(PolarBear.class)) {
@@ -112,5 +129,18 @@ public class ArcticManager {
             }
         }
         return best;
+    }
+
+    private static boolean usesFactionWar(GameMode mode) {
+        if (mode == null) {
+            return false;
+        }
+        for (TerrainPhaseConfig phase : mode.getTerrainPhases()) {
+            if ("VOLCANO_ERUPTION".equalsIgnoreCase(phase.getType())
+                    && VolcanoBiomeFactions.isEnabled(phase)) {
+                return true;
+            }
+        }
+        return false;
     }
 }
