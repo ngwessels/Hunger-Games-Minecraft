@@ -209,7 +209,7 @@ public enum Curse {
     // Tier IV - primal transformation
 
     BEAST_CAT(10, "Church Cat",
-            "You are reduced to a cat; claws only, hands forever lost.",
+            "You are reduced to a cat; claws only, until the punishment lifts.",
             Tier.PRIMAL) {
         private static final UUID MODIFIER_UUID =
                 UUID.nameUUIDFromBytes("hg_curse_beast_form".getBytes());
@@ -249,7 +249,7 @@ public enum Curse {
     },
 
     BEAST_DOG(11, "Hound of Wrath",
-            "You are remade a hound; fangs and fury, nothing more.",
+            "You are remade a hound; fangs and fury, until the punishment lifts.",
             Tier.PRIMAL) {
         private static final UUID MODIFIER_UUID =
                 UUID.nameUUIDFromBytes("hg_curse_beast_form".getBytes());
@@ -279,7 +279,7 @@ public enum Curse {
     },
 
     BEAST_POLAR_BEAR(12, "White Bruin",
-            "You are given to the wild as a polar bear; mighty but mindless.",
+            "You are given to the wild as a polar bear until the punishment lifts.",
             Tier.PRIMAL) {
         @Override
         public EntityType beastType() {

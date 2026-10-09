@@ -44,6 +44,7 @@ public final class ArenaEntityUtil {
     public static final NamespacedKey COMET_KEY = new NamespacedKey("hungergames", "volcano_comet");
     public static final NamespacedKey BEAST_FORM_KEY = new NamespacedKey("hungergames", "beast_form");
     public static final NamespacedKey BEAST_CAMERA_KEY = new NamespacedKey("hungergames", "beast_camera");
+    public static final NamespacedKey CHURCH_PROJECTILE_KEY = new NamespacedKey("hungergames", "church_projectile");
     private static final NamespacedKey SIMULATION_TARGET_KEY =
             new NamespacedKey("hungergames", "simulation_test_target");
 
@@ -143,6 +144,15 @@ public final class ArenaEntityUtil {
     public static boolean isBeastCamera(Entity entity) {
         return entity instanceof ArmorStand stand
                 && stand.getPersistentDataContainer().has(BEAST_CAMERA_KEY, PersistentDataType.STRING);
+    }
+
+    /** Marks a projectile (or lingering cloud) as launched from inside a church. */
+    public static void tagChurchProjectile(Entity entity) {
+        entity.getPersistentDataContainer().set(CHURCH_PROJECTILE_KEY, PersistentDataType.BYTE, (byte) 1);
+    }
+
+    public static boolean isChurchProjectile(Entity entity) {
+        return entity.getPersistentDataContainer().has(CHURCH_PROJECTILE_KEY, PersistentDataType.BYTE);
     }
 
     public static void tagPhaseMob(Plugin plugin, LivingEntity entity) {

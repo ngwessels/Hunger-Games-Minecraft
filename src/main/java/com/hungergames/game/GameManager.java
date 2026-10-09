@@ -339,11 +339,16 @@ public class GameManager {
         GameState state = game.getState();
         if (session.applyMatchSnapshot(player)) {
             plugin.getCustomItemListener().updatePassives(player);
+            if (plugin.getCurseManager().isBeastCursed(session)) {
+                plugin.getCurseManager().stripBeastInventory(player);
+            }
             plugin.getCurseManager().reapplyOnRespawn(session);
             session.applyMatchVitals(player);
             player.setAllowFlight(false);
             player.setFlying(false);
-            player.setInvisible(false);
+            if (!plugin.getCurseManager().isBeastCursed(session)) {
+                player.setInvisible(false);
+            }
             MatchKit.clearPostMatchFlags(player);
             if (session.isInRespawnGrace()) {
                 player.setGlowing(true);
