@@ -275,7 +275,9 @@ public class ArenaGenerator {
         surface = ArcticRing.surfaceMaterial(arena, gameMode, x, z, seed, surface);
         changes.add(new BlockBatchUtil.BlockChange(x, surfaceY, z, surface));
 
+        // Tundra/ice overlays own their surface decoration; skip the forest pass there.
         if (!ArcticRing.isArcticColumn(arena, gameMode, x, z)
+                && !ArcticRing.isTundraColumn(arena, gameMode, x, z)
                 && !VolcanoPonds.isInside(ponds, x, z, 1.5)
                 && !shouldPlantTree(arena, gameMode, groveArea, settlementSites, ponds, heightmap, minX, minZ,
                 x, z, surface, seed, cx, cz, radius)) {
@@ -302,6 +304,7 @@ public class ArenaGenerator {
                 }
                 int surfaceY = TerrainHeightmap.getHeight(heightmap, minX, minZ, x, z);
                 Material surface = getSurfaceMaterial(gameMode.getInitialTerrain(), x, z, seed, cx, cz);
+                surface = ArcticRing.surfaceMaterial(arena, gameMode, x, z, seed, surface);
                 if (shouldPlantTree(arena, gameMode, groveArea, settlementSites, ponds, heightmap, minX, minZ,
                         x, z, surface, seed, cx, cz, radius)) {
                     TreePlacement.addTree(changes, x, surfaceY + 1, z, seed, trees);

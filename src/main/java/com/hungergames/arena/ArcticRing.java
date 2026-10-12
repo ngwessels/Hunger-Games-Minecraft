@@ -15,14 +15,15 @@ import java.util.List;
 import java.util.Random;
 
 /**
- * Frozen terrain on volcano arenas: snow plains, sea ice, glaciers, and
- * polar-bear sites. Default is an outer ring beyond the forest radius;
- * {@code iceWorldStart} ices the whole disc except the caldera.
+ * Cold terrain on volcano arenas: patchy tundra inside {@code forestRadius}
+ * (dry cold grass mixed with snow patches) and an ice-ocean ring beyond it
+ * with glaciers and polar-bear sites.
  */
 public final class ArcticRing {
 
     private static final long SITE_SALT = 0xA4C71C3L;
     private static final long BUILD_SALT = 0x1CE51C3L;
+    private static final int TUNDRA_NOISE_SEED = 401;
 
     private ArcticRing() {
     }
@@ -35,17 +36,34 @@ public final class ArcticRing {
         if (config == null || !config.isEnabled()) {
             return false;
         }
-        if (config.isIceWorldStart()) {
-            return true;
-        }
-        return gameMode.getArenaRadius() > gameMode.getForestRadius();
+        return gameMode.getArenaRadius() > gameMode.getForestRadius()
+                || gameMode.getForestRadius() > VolcanoCaldera.NO_TREE_RADIUS;
     }
 
+    /** True for the outer ice-ocean ring (fully blended arctic). */
     public static boolean isArcticColumn(Arena arena, GameMode gameMode, int x, int z) {
         return blendFactor(arena, gameMode, x, z) >= 1;
     }
 
-    /** 0 inside the forest/caldera, 1 fully arctic, ramp across the blend band. */
+    /**
+     * True for the playable cold disc inside the forest radius (excluding the
+     * caldera and the outer ice ring).
+     */
+    public static boolean isTundraColumn(Arena arena, GameMode gameMode, int x, int z) {
+        if (!isActive(arena, gameMode)) {
+            return false;
+        }
+        if (VolcanoCaldera.isInsideCalderaArea(arena.getCenterX(), arena.getCenterZ(), x, z)) {
+            return false;
+        }
+        if (isArcticColumn(arena, gameMode, x, z)) {
+            return false;
+        }
+        double dist = CircleUtil.distanceFromCenter(arena.getCenterX(), arena.getCenterZ(), x, z);
+        return dist <= gameMode.getForestRadius();
+    }
+
+    /** 0 inside the tundra/caldera, 1 fully ice-ocean, ramp across the blend band. */
     public static double blendFactor(Arena arena, GameMode gameMode, int x, int z) {
         if (!isActive(arena, gameMode)) {
             return 0;
@@ -53,11 +71,9 @@ public final class ArcticRing {
         ArcticConfig config = gameMode.getArctic();
         int blend = config.getBlendWidth();
         double dist = CircleUtil.distanceFromCenter(arena.getCenterX(), arena.getCenterZ(), x, z);
-        int inner;
-        if (config.isIceWorldStart()) {
-            inner = VolcanoCaldera.NO_TREE_RADIUS;
-        } else {
-            inner = gameMode.getForestRadius();
+        int inner = gameMode.getForestRadius();
+        if (gameMode.getArenaRadius() <= inner) {
+            return 0;
         }
         if (dist <= inner - blend) {
             return 0;
@@ -70,7 +86,7 @@ public final class ArcticRing {
 
     public static void refreshLayout(Arena arena, GameMode gameMode) {
         arena.getArcticLayout().clear();
-        if (!isActive(arena, gameMode)) {
+        if (!isActive(arena, gameMode) || gameMode.getArenaRadius() <= gameMode.getForestRadius()) {
             return;
         }
         int radius = arena.getRadius();
@@ -93,59 +109,120 @@ public final class ArcticRing {
             return;
         }
         ArcticLayout layout = arena.getArcticLayout();
-        planSites(arena, gameMode, heightmap, minX, minZ, layout);
-        Random random = new Random(arena.getTerrainSeed() * 31L + BUILD_SALT);
-        overlaySurface(changes, arena, gameMode, heightmap, minX, minZ);
-        addFrozenLakes(changes, arena, gameMode, heightmap, minX, minZ, random);
-        for (ArcticLayout.Site glacier : layout.getGlacierSites()) {
-            buildGlacier(changes, glacier, random);
+        if (gameMode.getArenaRadius() > gameMode.getForestRadius()) {
+            planSites(arena, gameMode, heightmap, minX, minZ, layout);
+        } else {
+            layout.clear();
         }
-        addIceSpikes(changes, arena, gameMode, heightmap, minX, minZ, layout, random);
+        Random random = new Random(arena.getTerrainSeed() * 31L + BUILD_SALT);
+        overlayTundra(changes, arena, gameMode, heightmap, minX, minZ);
+        if (gameMode.getArenaRadius() > gameMode.getForestRadius()) {
+            overlayIceOcean(changes, arena, gameMode, heightmap, minX, minZ);
+            addFrozenLakes(changes, arena, gameMode, heightmap, minX, minZ, random);
+            for (ArcticLayout.Site glacier : layout.getGlacierSites()) {
+                buildGlacier(changes, glacier, random);
+            }
+            addIceSpikes(changes, arena, gameMode, heightmap, minX, minZ, layout, random);
+        }
     }
 
     public static Material surfaceMaterial(Arena arena, GameMode gameMode, int x, int z, int seed,
                                            Material forestSurface) {
         double blend = blendFactor(arena, gameMode, x, z);
-        if (blend <= 0) {
-            return forestSurface;
+        if (blend > 0) {
+            Material arctic = iceOceanSurfaceAt(x, z, seed);
+            if (blend >= 1) {
+                return arctic;
+            }
+            double n = NoiseUtil.continuousNoise2D(x * 0.19, z * 0.19, seed + 311);
+            return n < blend * 2 - 0.35 ? arctic : forestSurface;
         }
-        Material arctic = arcticSurfaceAt(x, z, seed);
-        if (blend >= 1) {
-            return arctic;
+        if (isTundraColumn(arena, gameMode, x, z)) {
+            return tundraSurfaceAt(gameMode.getArctic(), x, z, seed);
         }
-        double n = NoiseUtil.continuousNoise2D(x * 0.19, z * 0.19, seed + 311);
-        return n < blend * 2 - 0.35 ? arctic : forestSurface;
+        return forestSurface;
     }
 
     public static Material subsurfaceMaterial(Arena arena, GameMode gameMode, int x, int y, int z,
                                               int surfaceY, int seed, Material forestSub) {
         double blend = blendFactor(arena, gameMode, x, z);
-        if (blend < 0.55) {
-            return forestSub;
+        if (blend >= 0.55) {
+            int depth = surfaceY - y;
+            if (depth <= 2) {
+                return Material.SNOW_BLOCK;
+            }
+            if (depth <= 5) {
+                return NoiseUtil.noise2D(x, z, seed + y) > 0.1 ? Material.PACKED_ICE : Material.SNOW_BLOCK;
+            }
+            return Material.STONE;
         }
+        if (isTundraColumn(arena, gameMode, x, z)) {
+            return tundraSubsurfaceAt(gameMode.getArctic(), x, y, z, surfaceY, seed);
+        }
+        return forestSub;
+    }
+
+    public static Biome biomeAt(Arena arena, GameMode gameMode, int x, int z) {
+        if (isArcticColumn(arena, gameMode, x, z)) {
+            if (nearGlacier(arena, x, z, 18)) {
+                return Biome.ICE_SPIKES;
+            }
+            double n = NoiseUtil.continuousNoise2D(x * 0.04, z * 0.04, arena.getTerrainSeed() + 77);
+            return n > 0.28 ? Biome.FROZEN_OCEAN : Biome.SNOWY_PLAINS;
+        }
+        if (isTundraColumn(arena, gameMode, x, z)) {
+            return isSnowyTundraPatch(gameMode.getArctic(), x, z, arena.getTerrainSeed())
+                    ? Biome.SNOWY_PLAINS
+                    : Biome.SNOWY_TAIGA;
+        }
+        return null;
+    }
+
+    /** Noise sample used by generation and the live tundra/plains conversion passes. */
+    public static boolean isSnowyTundraPatch(ArcticConfig config, int x, int z, int seed) {
+        if (config == null) {
+            return false;
+        }
+        double scale = config.getTundraPatchScale();
+        double n = NoiseUtil.continuousFractalNoise2D(x * scale, z * scale, seed + TUNDRA_NOISE_SEED, 3);
+        double unit = (n + 1.0) * 0.5;
+        return unit < config.getTundraSnowRatio();
+    }
+
+    public static Material tundraSurfaceAt(ArcticConfig config, int x, int z, int seed) {
+        if (isSnowyTundraPatch(config, x, z, seed)) {
+            // Deep drifts are snow blocks; lighter patches stay grass (snow layer added later).
+            double detail = NoiseUtil.continuousNoise2D(x * 0.22, z * 0.22, seed + 511);
+            return detail > 0.15 ? Material.SNOW_BLOCK : Material.GRASS_BLOCK;
+        }
+        double dry = NoiseUtil.continuousNoise2D(x * 0.11, z * 0.11, seed + 233);
+        if (dry > 0.42) {
+            return Material.PODZOL;
+        }
+        if (dry < -0.35) {
+            return Material.COARSE_DIRT;
+        }
+        return Material.GRASS_BLOCK;
+    }
+
+    public static Material tundraSubsurfaceAt(ArcticConfig config, int x, int y, int z,
+                                              int surfaceY, int seed) {
         int depth = surfaceY - y;
-        if (depth <= 2) {
+        boolean snowy = isSnowyTundraPatch(config, x, z, seed);
+        if (snowy && depth <= 2) {
             return Material.SNOW_BLOCK;
         }
-        if (depth <= 5) {
-            return NoiseUtil.noise2D(x, z, seed + y) > 0.1 ? Material.PACKED_ICE : Material.SNOW_BLOCK;
+        if (depth <= 3) {
+            return Material.DIRT;
+        }
+        if (depth <= 6) {
+            return NoiseUtil.noise2D(x, z, seed + y) > 0.2 ? Material.STONE : Material.DIRT;
         }
         return Material.STONE;
     }
 
-    public static Biome biomeAt(Arena arena, GameMode gameMode, int x, int z) {
-        if (!isArcticColumn(arena, gameMode, x, z)) {
-            return null;
-        }
-        if (nearGlacier(arena, x, z, 18)) {
-            return Biome.ICE_SPIKES;
-        }
-        double n = NoiseUtil.continuousNoise2D(x * 0.04, z * 0.04, arena.getTerrainSeed() + 77);
-        return n > 0.28 ? Biome.FROZEN_OCEAN : Biome.SNOWY_PLAINS;
-    }
-
-    private static Material arcticSurfaceAt(int x, int z, int seed) {
-        double n = NoiseUtil.continuousFractalNoise2D(x * 0.06, z * 0.06, seed + 401, 3);
+    private static Material iceOceanSurfaceAt(int x, int z, int seed) {
+        double n = NoiseUtil.continuousFractalNoise2D(x * 0.06, z * 0.06, seed + TUNDRA_NOISE_SEED, 3);
         if (n > 0.38) {
             return Material.PACKED_ICE;
         }
@@ -155,8 +232,56 @@ public final class ArcticRing {
         return Material.ICE;
     }
 
-    private static void overlaySurface(List<BlockBatchUtil.BlockChange> changes, Arena arena, GameMode gameMode,
-                                       int[][] heightmap, int minX, int minZ) {
+    private static void overlayTundra(List<BlockBatchUtil.BlockChange> changes, Arena arena, GameMode gameMode,
+                                      int[][] heightmap, int minX, int minZ) {
+        ArcticConfig config = gameMode.getArctic();
+        int radius = arena.getRadius();
+        double cx = arena.getCenterX();
+        double cz = arena.getCenterZ();
+        int seed = arena.getTerrainSeed();
+        int forest = gameMode.getForestRadius();
+        int minWorldX = (int) (cx - radius);
+        int maxWorldX = (int) (cx + radius);
+        int minWorldZ = (int) (cz - radius);
+        int maxWorldZ = (int) (cz + radius);
+        for (int x = minWorldX; x <= maxWorldX; x++) {
+            for (int z = minWorldZ; z <= maxWorldZ; z++) {
+                if (!CircleUtil.isInsideCircle(cx, cz, x, z, radius)) {
+                    continue;
+                }
+                if (!isTundraColumn(arena, gameMode, x, z)) {
+                    continue;
+                }
+                if (CircleUtil.distanceFromCenter(cx, cz, x, z) > forest) {
+                    continue;
+                }
+                int surfaceY = TerrainHeightmap.getHeight(heightmap, minX, minZ, x, z);
+                Material surface = tundraSurfaceAt(config, x, z, seed);
+                changes.add(new BlockBatchUtil.BlockChange(x, surfaceY, z, surface));
+                if (surface == Material.SNOW_BLOCK
+                        || (isSnowyTundraPatch(config, x, z, seed) && surface == Material.GRASS_BLOCK)) {
+                    if (NoiseUtil.continuousNoise2D(x * 0.27, z * 0.27, seed + 55) > 0.05) {
+                        changes.add(new BlockBatchUtil.BlockChange(x, surfaceY + 1, z, Material.SNOW));
+                    }
+                } else if (surface == Material.GRASS_BLOCK || surface == Material.PODZOL) {
+                    double decor = NoiseUtil.continuousNoise2D(x * 0.25, z * 0.25, seed + 66);
+                    if (decor > 0.55) {
+                        changes.add(new BlockBatchUtil.BlockChange(x, surfaceY + 1, z, Material.SHORT_GRASS));
+                    } else if (decor > 0.38) {
+                        changes.add(new BlockBatchUtil.BlockChange(x, surfaceY + 1, z, Material.FERN));
+                    } else if (decor < -0.5) {
+                        changes.add(new BlockBatchUtil.BlockChange(x, surfaceY + 1, z, Material.DEAD_BUSH));
+                    }
+                } else if (surface == Material.COARSE_DIRT
+                        && NoiseUtil.continuousNoise2D(x * 0.31, z * 0.31, seed + 88) > 0.5) {
+                    changes.add(new BlockBatchUtil.BlockChange(x, surfaceY + 1, z, Material.DEAD_BUSH));
+                }
+            }
+        }
+    }
+
+    private static void overlayIceOcean(List<BlockBatchUtil.BlockChange> changes, Arena arena, GameMode gameMode,
+                                        int[][] heightmap, int minX, int minZ) {
         int radius = arena.getRadius();
         double cx = arena.getCenterX();
         double cz = arena.getCenterZ();
@@ -175,7 +300,7 @@ public final class ArcticRing {
                     continue;
                 }
                 int surfaceY = TerrainHeightmap.getHeight(heightmap, minX, minZ, x, z);
-                Material surface = arcticSurfaceAt(x, z, seed);
+                Material surface = iceOceanSurfaceAt(x, z, seed);
                 changes.add(new BlockBatchUtil.BlockChange(x, surfaceY, z, surface));
                 if (surface == Material.SNOW_BLOCK
                         && NoiseUtil.continuousNoise2D(x * 0.27, z * 0.27, seed + 55) > 0.15) {

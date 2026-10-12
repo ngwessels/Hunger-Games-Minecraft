@@ -1,6 +1,7 @@
 package com.hungergames.terrain;
 
 import com.hungergames.HungerGamesPlugin;
+import com.hungergames.arena.ArcticRing;
 import com.hungergames.arena.Arena;
 import com.hungergames.arena.JungleGrove;
 import com.hungergames.arena.VolcanoCaldera;
@@ -8,6 +9,8 @@ import com.hungergames.config.PluginConfig;
 import com.hungergames.game.Game;
 import com.hungergames.game.GameState;
 import com.hungergames.game.MatchPacing;
+import com.hungergames.gamemode.ArcticConfig;
+import com.hungergames.gamemode.GameMode;
 import com.hungergames.gamemode.TerrainPhaseConfig;
 import com.hungergames.util.CircleUtil;
 import com.hungergames.util.NoiseUtil;
@@ -22,9 +25,11 @@ import org.bukkit.scheduler.BukkitTask;
 import java.util.Set;
 
 /**
- * Ice-versus-volcano biome tug-of-war. The map starts frozen (generation and/or
- * a batched freeze pass). Volcanic radius follows match progress plus a decaying
- * sine so ice recaptures ground and then loses it, ending fully volcanic.
+ * Tundra / plains / nether tug-of-war. The inner disc starts as patchy tundra
+ * (generation and/or a batched ensure pass). Volcanic radius follows match
+ * progress plus a decaying sine: a plains band advances ahead of nether, then
+ * nether consumes it. When the front retreats, columns restore to plains then
+ * tundra. The outer ice-ocean ring is never overwritten by these passes.
  */
 public class VolcanoBiomeWar {
 
@@ -36,7 +41,8 @@ public class VolcanoBiomeWar {
     );
 
     private final HungerGamesPlugin plugin;
-    private final int[] freezeCursor = new int[1];
+    private final int[] tundraCursor = new int[1];
+    private final int[] plainsCursor = new int[1];
     private final int[] recaptureCursor = new int[1];
 
     private Game game;
@@ -46,8 +52,8 @@ public class VolcanoBiomeWar {
     private int scanBaseY;
     private double dominance;
     private int volcanicRadius = VolcanoCaldera.NO_TREE_RADIUS;
-    private boolean freezeComplete;
-    private BukkitTask freezeTask;
+    private int plainsRadius = VolcanoCaldera.NO_TREE_RADIUS;
+    private BukkitTask tundraTask;
     private double[] groveArea;
 
     public VolcanoBiomeWar(HungerGamesPlugin plugin) {
@@ -68,16 +74,18 @@ public class VolcanoBiomeWar {
         this.groveArea = JungleGrove.groveArea(matchArena, match.getGameMode());
         this.dominance = 0;
         this.volcanicRadius = VolcanoCaldera.NO_TREE_RADIUS;
-        startFreezeTask();
+        this.plainsRadius = VolcanoCaldera.NO_TREE_RADIUS;
+        startTundraTask();
     }
 
     public void reset() {
-        stopFreezeTask();
-        freezeCursor[0] = 0;
+        stopTundraTask();
+        tundraCursor[0] = 0;
+        plainsCursor[0] = 0;
         recaptureCursor[0] = 0;
-        freezeComplete = false;
         dominance = 0;
         volcanicRadius = VolcanoCaldera.NO_TREE_RADIUS;
+        plainsRadius = VolcanoCaldera.NO_TREE_RADIUS;
         groveArea = null;
         game = null;
         arena = null;
@@ -87,6 +95,7 @@ public class VolcanoBiomeWar {
         return dominance;
     }
 
+    /** Remaining cold/tundra strength opposite volcanic dominance (ice faction scaling). */
     public double getIceDominance() {
         return Math.max(0.0, 1.0 - dominance);
     }
@@ -95,14 +104,18 @@ public class VolcanoBiomeWar {
         return volcanicRadius;
     }
 
+    public int getPlainsRadius() {
+        return plainsRadius;
+    }
+
     public boolean isVolcanicColumn(int x, int z) {
         return CircleUtil.distanceFromCenter(cx, cz, x, z) <= volcanicRadius
                 + NoiseUtil.continuousNoise2D(x * 0.07, z * 0.07, 71) * 5.0;
     }
 
     /**
-     * 0 = full ice, 1 = full volcano. Oscillation amplitude decays so ice can
-     * surge back mid-match and still lose by the end.
+     * 0 = full tundra, 1 = full volcano. Oscillation amplitude decays so cold
+     * terrain can surge back mid-match and still lose by the end.
      */
     public double computeDominance(Game match, PluginConfig pluginConfig, TerrainPhaseConfig config) {
         double progress = MatchPacing.getMatchProgress(match, pluginConfig);
@@ -140,8 +153,8 @@ public class VolcanoBiomeWar {
     }
 
     /**
-     * Drive nether expansion or ice recapture toward the oscillating target.
-     * {@code protectedRadius} is the volcano cone — ice never overwrites it.
+     * Drive plains + nether expansion or cold recapture toward the oscillating target.
+     * {@code protectedRadius} is the volcano cone — cold terrain never overwrites it.
      */
     public void tickConversion(World world, Arena matchArena, Game match, TerrainPhaseConfig config,
                                VolcanoNetherSpread netherSpread, int protectedRadius) {
@@ -150,85 +163,94 @@ public class VolcanoBiomeWar {
         }
         PluginConfig pluginConfig = plugin.getPluginConfig();
         dominance = computeDominance(match, pluginConfig, config);
-        int target = computeVolcanicRadius(matchArena, match, pluginConfig, config);
+        int targetNether = computeVolcanicRadius(matchArena, match, pluginConfig, config);
         int floor = Math.max(VolcanoCaldera.NO_TREE_RADIUS, protectedRadius);
-        target = Math.max(floor, target);
-        volcanicRadius = target;
+        targetNether = Math.max(floor, targetNether);
+        volcanicRadius = targetNether;
+
+        int forestCap = match.getGameMode().getForestRadius();
+        int plainsLead = Math.max(0, config.getInt("biomeWarPlainsLeadBlocks", 48));
+        plainsRadius = Math.min(forestCap, Math.max(targetNether, targetNether + plainsLead));
 
         int current = netherSpread.getConvertedRadius();
-        if (target >= current) {
-            netherSpread.tick(world, matchArena, match.getGameMode(), config, target);
+        if (targetNether >= current) {
+            convertPlainsBand(world, matchArena, config, targetNether, plainsRadius);
+            netherSpread.tick(world, matchArena, match.getGameMode(), config, targetNether);
             return;
         }
         if (!config.getBoolean("biomeWarIceRecaptureEnabled", true)) {
             return;
         }
-        recaptureIce(world, matchArena, config, netherSpread, target, current);
-        netherSpread.setConvertedRadius(target);
+        recaptureCold(world, matchArena, config, netherSpread, targetNether, current, plainsRadius);
+        netherSpread.setConvertedRadius(targetNether);
     }
 
-    private void startFreezeTask() {
-        stopFreezeTask();
-        freezeComplete = false;
-        freezeCursor[0] = 0;
-        freezeTask = new BukkitRunnable() {
+    private void startTundraTask() {
+        stopTundraTask();
+        tundraCursor[0] = 0;
+        tundraTask = new BukkitRunnable() {
             @Override
             public void run() {
                 if (game == null || arena == null) {
                     cancel();
-                    freezeTask = null;
+                    tundraTask = null;
                     return;
                 }
                 GameState state = game.getState();
                 if (state != GameState.GRACE && state != GameState.ACTIVE) {
                     cancel();
-                    freezeTask = null;
+                    tundraTask = null;
                     return;
                 }
                 World world = arena.getWorld();
                 if (world == null) {
                     cancel();
-                    freezeTask = null;
+                    tundraTask = null;
                     return;
                 }
-                if (tickFreezeBatch(world, arena)) {
-                    freezeComplete = true;
+                if (tickTundraBatch(world, arena, game.getGameMode())) {
                     cancel();
-                    freezeTask = null;
+                    tundraTask = null;
                 }
             }
         }.runTaskTimer(plugin, 0L, 1L);
     }
 
-    private void stopFreezeTask() {
-        if (freezeTask != null) {
-            freezeTask.cancel();
-            freezeTask = null;
+    private void stopTundraTask() {
+        if (tundraTask != null) {
+            tundraTask.cancel();
+            tundraTask = null;
         }
     }
 
     /**
-     * Converts remaining overworld columns to ice so existing forest templates
-     * become an ice world without waiting for a regenerate. Already-ice columns
-     * are cheap no-ops. Returns true when the disc has been fully scanned.
+     * Ensures the inner disc is patchy tundra so older forest/ice templates
+     * match the new layout without a full regenerate. Outer ice ocean and
+     * caldera/grove columns are skipped. Returns true when fully scanned.
      */
-    private boolean tickFreezeBatch(World world, Arena matchArena) {
+    private boolean tickTundraBatch(World world, Arena matchArena, GameMode gameMode) {
         TerrainPhaseConfig config = plugin.getTerrainPhaseManager().getCurrentPhaseConfig();
         int columns = 400;
         if (config != null) {
             columns = Math.max(40, config.getInt("biomeWarFreezeColumnsPerTick", 400));
         }
-        int radius = Math.max(1, matchArena.getRadius() - 2);
+        ArcticConfig arctic = gameMode != null ? gameMode.getArctic() : null;
+        if (arctic == null || !arctic.isEnabled()) {
+            return true;
+        }
+        int forest = gameMode.getForestRadius();
+        int radius = Math.max(1, Math.min(forest, matchArena.getRadius() - 2));
         int cxBlock = (int) cx;
         int czBlock = (int) cz;
         int side = 2 * radius + 1;
         int totalCells = side * side;
-        int start = freezeCursor[0];
+        int start = tundraCursor[0];
         int converted = 0;
+        int seed = matchArena.getTerrainSeed();
         while (converted < columns) {
-            int idx = freezeCursor[0] % totalCells;
-            freezeCursor[0]++;
-            if (freezeCursor[0] - start > totalCells) {
+            int idx = tundraCursor[0] % totalCells;
+            tundraCursor[0]++;
+            if (tundraCursor[0] - start > totalCells) {
                 return true;
             }
             int dx = idx % side - radius;
@@ -244,43 +266,24 @@ public class VolcanoBiomeWar {
             if (JungleGrove.isInside(groveArea, x, z)) {
                 continue;
             }
+            if (ArcticRing.isArcticColumn(matchArena, gameMode, x, z)) {
+                continue;
+            }
             if (isVolcanicColumn(x, z) && volcanicRadius > VolcanoCaldera.NO_TREE_RADIUS + 2) {
                 continue;
             }
-            freezeColumn(world, x, z, matchArena.getTerrainSeed());
-            converted++;
-        }
-        return freezeCursor[0] - start > totalCells;
-    }
-
-    private void freezeColumn(World world, int x, int z, int seed) {
-        int groundY = VolcanoHeatUtil.findTerrainGroundY(world, x, z, scanBaseY);
-        int minY = Math.max(1, groundY - 4);
-        int maxY = groundY + 6;
-        boolean crimsonNoise = NoiseUtil.continuousNoise2D(x * 0.06, z * 0.06, seed + 401) > 0.08;
-        for (int y = minY; y <= maxY; y++) {
-            Block block = world.getBlockAt(x, y, z);
-            Material current = block.getType();
-            if (current.isAir() || current == Material.LAVA || PROTECTED.contains(current)) {
-                continue;
-            }
-            if (isAlreadyIce(current) || VolcanoNetherSpread.isNetherGround(current)) {
-                continue;
-            }
-            Material next = iceReplacement(current, x, y, z, groundY, crimsonNoise);
-            if (next != null && next != current) {
-                block.setType(next, false);
+            if (applyTundraColumn(world, x, z, seed, arctic)) {
+                converted++;
             }
         }
-        world.setBiome(x, groundY, z, Biome.SNOWY_PLAINS);
-        world.setBiome(x, Math.max(1, groundY - 8), z, Biome.SNOWY_PLAINS);
-        world.setBiome(x, groundY + 8, z, Biome.SNOWY_PLAINS);
+        return tundraCursor[0] - start > totalCells;
     }
 
-    private void recaptureIce(World world, Arena matchArena, TerrainPhaseConfig config,
-                              VolcanoNetherSpread netherSpread, int targetRadius, int currentRadius) {
-        int columns = Math.max(8, config.getInt("biomeWarRecaptureColumnsPerTick", 56));
-        int scanRadius = Math.min(matchArena.getRadius() - 2, currentRadius + 4);
+    private void convertPlainsBand(World world, Arena matchArena, TerrainPhaseConfig config,
+                                   int netherRadius, int targetPlains) {
+        int columns = Math.max(8, config.getInt("biomeWarPlainsColumnsPerTick", 64));
+        int forest = game != null ? game.getGameMode().getForestRadius() : matchArena.getRadius();
+        int scanRadius = Math.min(forest, Math.min(matchArena.getRadius() - 2, targetPlains + 4));
         int cxBlock = (int) cx;
         int czBlock = (int) cz;
         int side = 2 * scanRadius + 1;
@@ -288,6 +291,54 @@ public class VolcanoBiomeWar {
         if (totalCells <= 0) {
             return;
         }
+        int converted = 0;
+        int start = plainsCursor[0];
+        int seed = matchArena.getTerrainSeed();
+        while (converted < columns) {
+            int idx = plainsCursor[0] % totalCells;
+            plainsCursor[0]++;
+            if (plainsCursor[0] - start > totalCells) {
+                break;
+            }
+            int dx = idx % side - scanRadius;
+            int dz = idx / side - scanRadius;
+            int distSq = dx * dx + dz * dz;
+            if (distSq > scanRadius * scanRadius) {
+                continue;
+            }
+            double dist = Math.sqrt(distSq);
+            if (dist <= netherRadius || dist > targetPlains) {
+                continue;
+            }
+            int x = cxBlock + dx;
+            int z = czBlock + dz;
+            if (VolcanoCaldera.isInsideCalderaArea(cx, cz, x, z)) {
+                continue;
+            }
+            if (JungleGrove.isInside(groveArea, x, z)) {
+                continue;
+            }
+            if (applyPlainsColumn(world, x, z, seed)) {
+                converted++;
+            }
+        }
+    }
+
+    private void recaptureCold(World world, Arena matchArena, TerrainPhaseConfig config,
+                               VolcanoNetherSpread netherSpread, int targetNether, int currentNether,
+                               int targetPlains) {
+        int columns = Math.max(8, config.getInt("biomeWarRecaptureColumnsPerTick", 56));
+        int forest = game != null ? game.getGameMode().getForestRadius() : matchArena.getRadius();
+        int scanRadius = Math.min(matchArena.getRadius() - 2, Math.max(currentNether, targetPlains) + 4);
+        int cxBlock = (int) cx;
+        int czBlock = (int) cz;
+        int side = 2 * scanRadius + 1;
+        int totalCells = side * side;
+        if (totalCells <= 0) {
+            return;
+        }
+        ArcticConfig arctic = game != null ? game.getGameMode().getArctic() : null;
+        int seed = matchArena.getTerrainSeed();
         int converted = 0;
         int start = recaptureCursor[0];
         while (converted < columns) {
@@ -307,24 +358,65 @@ public class VolcanoBiomeWar {
             if (VolcanoCaldera.isInsideCalderaArea(cx, cz, x, z)) {
                 continue;
             }
+            if (ArcticRing.isArcticColumn(matchArena, game.getGameMode(), x, z)) {
+                continue;
+            }
             double dist = Math.sqrt(distSq);
-            if (dist <= targetRadius) {
+            if (dist <= targetNether) {
                 continue;
             }
-            if (netherSpread.contains(x, z) && dist <= targetRadius + 6) {
+            if (netherSpread.contains(x, z) && dist <= targetNether + 6) {
                 continue;
             }
-            if (recaptureColumn(world, x, z, matchArena.getTerrainSeed())) {
+            boolean changed;
+            if (dist <= targetPlains && dist <= forest) {
+                changed = applyPlainsColumn(world, x, z, seed);
+            } else if (dist <= forest && arctic != null) {
+                changed = applyTundraColumn(world, x, z, seed, arctic);
+            } else {
+                continue;
+            }
+            if (changed) {
                 converted++;
             }
         }
     }
 
-    private boolean recaptureColumn(World world, int x, int z, int seed) {
+    private boolean applyTundraColumn(World world, int x, int z, int seed, ArcticConfig arctic) {
         int groundY = VolcanoHeatUtil.findTerrainGroundY(world, x, z, scanBaseY);
-        int minY = Math.max(1, groundY - 6);
+        int minY = Math.max(1, groundY - 4);
+        int maxY = groundY + 6;
+        boolean snowy = ArcticRing.isSnowyTundraPatch(arctic, x, z, seed);
+        boolean changed = false;
+        for (int y = minY; y <= maxY; y++) {
+            Block block = world.getBlockAt(x, y, z);
+            Material current = block.getType();
+            if (current.isAir() && y != groundY + 1) {
+                continue;
+            }
+            if (current == Material.LAVA || PROTECTED.contains(current)) {
+                continue;
+            }
+            if (VolcanoNetherSpread.isNetherGround(current) && y < groundY) {
+                continue;
+            }
+            Material next = tundraReplacement(current, x, y, z, groundY, snowy, seed, arctic);
+            if (next != null && next != current) {
+                block.setType(next, false);
+                changed = true;
+            }
+        }
+        Biome biome = snowy ? Biome.SNOWY_PLAINS : Biome.SNOWY_TAIGA;
+        world.setBiome(x, groundY, z, biome);
+        world.setBiome(x, Math.max(1, groundY - 8), z, biome);
+        world.setBiome(x, groundY + 8, z, biome);
+        return changed;
+    }
+
+    private boolean applyPlainsColumn(World world, int x, int z, int ignoredSeed) {
+        int groundY = VolcanoHeatUtil.findTerrainGroundY(world, x, z, scanBaseY);
+        int minY = Math.max(1, groundY - 4);
         int maxY = groundY + 40;
-        boolean packed = NoiseUtil.continuousNoise2D(x * 0.06, z * 0.06, seed + 401) > 0.08;
         boolean changed = false;
         for (int y = minY; y <= maxY; y++) {
             Block block = world.getBlockAt(x, y, z);
@@ -332,23 +424,27 @@ public class VolcanoBiomeWar {
             if (current.isAir() || PROTECTED.contains(current)) {
                 continue;
             }
-            Material next = iceReplacement(current, x, y, z, groundY, packed);
+            Material next = plainsReplacement(current, y, groundY);
             if (next != null && next != current) {
                 block.setType(next, false);
                 changed = true;
             }
         }
-        if (changed) {
-            world.setBiome(x, groundY, z, Biome.SNOWY_PLAINS);
-            world.setBiome(x, Math.max(1, groundY - 8), z, Biome.SNOWY_PLAINS);
-            world.setBiome(x, groundY + 8, z, Biome.SNOWY_PLAINS);
+        if (changed || world.getBiome(x, groundY, z) != Biome.PLAINS) {
+            world.setBiome(x, groundY, z, Biome.PLAINS);
+            world.setBiome(x, Math.max(1, groundY - 8), z, Biome.PLAINS);
+            world.setBiome(x, groundY + 8, z, Biome.PLAINS);
+            changed = true;
         }
         return changed;
     }
 
-    private static Material iceReplacement(Material current, int x, int y, int z, int groundY,
-                                           boolean packedBias) {
-        if (current == Material.LAVA || current == Material.WATER) {
+    private static Material tundraReplacement(Material current, int x, int y, int z, int groundY,
+                                              boolean snowy, int seed, ArcticConfig arctic) {
+        if (current == Material.LAVA) {
+            return null;
+        }
+        if (current == Material.WATER) {
             return y >= groundY ? Material.ICE : Material.PACKED_ICE;
         }
         if (current == Material.FIRE || current == Material.SOUL_FIRE
@@ -358,43 +454,102 @@ public class VolcanoBiomeWar {
                 || current == Material.DEAD_BUSH || current == Material.CRIMSON_FUNGUS
                 || current == Material.WARPED_FUNGUS || current == Material.WEEPING_VINES
                 || current == Material.TWISTING_VINES) {
-            return y > groundY ? Material.SNOW : Material.AIR;
+            if (y > groundY) {
+                return snowy ? Material.SNOW : Material.AIR;
+            }
+            return Material.AIR;
         }
         if (Tag.LEAVES.isTagged(current) || current == Material.NETHER_WART_BLOCK
                 || current == Material.WARPED_WART_BLOCK || current == Material.SHROOMLIGHT) {
-            return Material.PACKED_ICE;
-        }
-        if (Tag.LOGS.isTagged(current) || Tag.PLANKS.isTagged(current)
-                || Tag.WOODEN_FENCES.isTagged(current)) {
-            return packedBias ? Material.PACKED_ICE : Material.BLUE_ICE;
-        }
-        if (isAlreadyIce(current)) {
             return current;
         }
+        if (Tag.LOGS.isTagged(current) || Tag.PLANKS.isTagged(current)
+                || Tag.WOODEN_FENCES.isTagged(current)
+                || VolcanoNetherSpread.isNetherGround(current)) {
+            if (y == groundY) {
+                return ArcticRing.tundraSurfaceAt(arctic, x, z, seed);
+            }
+            if (y > groundY) {
+                return Material.AIR;
+            }
+            return ArcticRing.tundraSubsurfaceAt(arctic, x, y, z, groundY, seed);
+        }
+        if (isColdSurface(current) || isWarmOverworldSurface(current)) {
+            if (y == groundY) {
+                return ArcticRing.tundraSurfaceAt(arctic, x, z, seed);
+            }
+            if (y > groundY) {
+                return snowy ? Material.SNOW : null;
+            }
+            return ArcticRing.tundraSubsurfaceAt(arctic, x, y, z, groundY, seed);
+        }
         if (y == groundY) {
-            double n = NoiseUtil.continuousFractalNoise2D(x * 0.06, z * 0.06, 401, 3);
-            if (n > 0.38) {
-                return Material.PACKED_ICE;
-            }
-            if (n > 0.08) {
-                return Material.SNOW_BLOCK;
-            }
-            return Material.ICE;
+            return ArcticRing.tundraSurfaceAt(arctic, x, z, seed);
         }
-        if (y > groundY) {
+        if (y == groundY + 1 && snowy && (current.isAir() || current == Material.SNOW)) {
             return Material.SNOW;
-        }
-        int depth = groundY - y;
-        if (depth <= 2) {
-            return Material.SNOW_BLOCK;
-        }
-        if (depth <= 5) {
-            return packedBias ? Material.PACKED_ICE : Material.SNOW_BLOCK;
         }
         return null;
     }
 
-    private static boolean isAlreadyIce(Material type) {
+    private static Material plainsReplacement(Material current, int y, int groundY) {
+        if (current == Material.LAVA && y >= groundY) {
+            return Material.AIR;
+        }
+        if (current == Material.SNOW || current == Material.POWDER_SNOW) {
+            return Material.AIR;
+        }
+        if (current == Material.SNOW_BLOCK || current == Material.ICE
+                || current == Material.PACKED_ICE || current == Material.BLUE_ICE
+                || current == Material.FROSTED_ICE) {
+            if (y == groundY) {
+                return Material.GRASS_BLOCK;
+            }
+            if (y > groundY) {
+                return Material.AIR;
+            }
+            return Material.DIRT;
+        }
+        if (VolcanoNetherSpread.isNetherGround(current)
+                || current == Material.MAGMA_BLOCK
+                || current == Material.CRIMSON_NYLIUM
+                || current == Material.WARPED_NYLIUM
+                || current == Material.NETHER_WART_BLOCK
+                || current == Material.WARPED_WART_BLOCK
+                || current == Material.SHROOMLIGHT
+                || current == Material.SOUL_SAND
+                || current == Material.SOUL_SOIL
+                || current == Material.CRIMSON_STEM
+                || current == Material.WARPED_STEM
+                || current == Material.CRIMSON_HYPHAE
+                || current == Material.WARPED_HYPHAE
+                || current == Material.CRIMSON_PLANKS
+                || current == Material.WARPED_PLANKS
+                || current == Material.CRIMSON_ROOTS
+                || current == Material.WARPED_ROOTS
+                || current == Material.NETHER_SPROUTS
+                || current == Material.WEEPING_VINES
+                || current == Material.TWISTING_VINES
+                || current == Material.SOUL_FIRE) {
+            if (y == groundY) {
+                return Material.GRASS_BLOCK;
+            }
+            if (y > groundY) {
+                return Material.AIR;
+            }
+            int depth = groundY - y;
+            if (depth <= 3) {
+                return Material.DIRT;
+            }
+            return Material.STONE;
+        }
+        if (current == Material.COARSE_DIRT || current == Material.PODZOL) {
+            return y == groundY ? Material.GRASS_BLOCK : current;
+        }
+        return null;
+    }
+
+    private static boolean isColdSurface(Material type) {
         return type == Material.ICE
                 || type == Material.PACKED_ICE
                 || type == Material.BLUE_ICE
@@ -402,5 +557,16 @@ public class VolcanoBiomeWar {
                 || type == Material.SNOW
                 || type == Material.SNOW_BLOCK
                 || type == Material.POWDER_SNOW;
+    }
+
+    private static boolean isWarmOverworldSurface(Material type) {
+        return type == Material.GRASS_BLOCK
+                || type == Material.DIRT
+                || type == Material.COARSE_DIRT
+                || type == Material.PODZOL
+                || type == Material.ROOTED_DIRT
+                || type == Material.BASALT
+                || type == Material.SMOOTH_BASALT
+                || type == Material.GRAVEL;
     }
 }

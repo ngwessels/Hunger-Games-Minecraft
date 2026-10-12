@@ -431,6 +431,9 @@ public class VolcanoNetherSpread {
         if (melted == Material.AIR) {
             return Material.AIR;
         }
+        if (melted == Material.DIRT) {
+            current = Material.DIRT;
+        }
         if (current == Material.FIRE || current == Material.SOUL_FIRE) {
             return Material.AIR;
         }
@@ -571,15 +574,17 @@ public class VolcanoNetherSpread {
     }
 
     private static Material meltArctic(Material current) {
-        if (current == Material.SNOW) {
+        if (current == Material.SNOW || current == Material.POWDER_SNOW) {
             return Material.AIR;
+        }
+        // Land snow thaws to dirt (then nether soil); sea/glacier ice becomes water/lava.
+        if (current == Material.SNOW_BLOCK) {
+            return Material.DIRT;
         }
         if (current == Material.ICE
                 || current == Material.PACKED_ICE
                 || current == Material.BLUE_ICE
-                || current == Material.FROSTED_ICE
-                || current == Material.SNOW_BLOCK
-                || current == Material.POWDER_SNOW) {
+                || current == Material.FROSTED_ICE) {
             return Material.WATER;
         }
         return null;

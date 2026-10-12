@@ -30,8 +30,8 @@ public class TerrainPhaseManager {
     }
 
     /**
-     * Grace-time hook: freeze the volcano map to ice and remember faction
-     * controllers before the FOREST/ERUPTION sequence starts.
+     * Grace-time hook: ensure the volcano map is patchy tundra (not ice sheets)
+     * and remember faction controllers before the FOREST/ERUPTION sequence starts.
      */
     public void onMatchBegin(Game game) {
         activeGame = game;
