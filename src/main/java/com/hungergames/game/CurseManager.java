@@ -14,10 +14,11 @@ import org.bukkit.Sound;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.attribute.AttributeModifier;
-import org.bukkit.entity.ArmorStand;
+import org.bukkit.entity.Ageable;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Mob;
 import org.bukkit.entity.Player;
+import org.bukkit.entity.Sittable;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.PlayerInventory;
 import org.bukkit.potion.PotionEffect;
@@ -33,18 +34,18 @@ import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 import java.util.UUID;
-import java.util.function.Consumer;
 
 /**
  * Condemnation system for church violence: lifts the aggressor into the air
- * under divine lightning and brands them with a persistent custom curse that
- * survives every death for the remainder of the match. Applies both to PvP
- * inside the nave and to attacks on players taking sanctuary (arrows shot
- * through a TNT-opened wall count). Curses stack by church offense: tier 1
- * on the first, then 2, 3, and a primal animal form at 4. Earlier marks stay
- * in effect; further violence only repeats the lightning. Primal curses bind
- * the player into an animal: they see from its eyes, others see only the
- * animal, and paws cannot hold items.
+ * under divine lightning and brands them with a custom curse. Applies to PvP
+ * inside the nave and to attacks into or out of sanctuary (any projectile
+ * launched from inside, or landing on a player inside, counts). Curses stack
+ * by church offense: tier 1 on the first, then 2, 3, and a primal animal form
+ * at 4. Earlier marks stay in effect. The animal form is timed (default two
+ * minutes): death during the window respawns them still as the animal with
+ * remaining time continuing, and they turn back when it expires. Attacking
+ * from a church again while transformed renews the timer. Others see only the
+ * animal; paws cannot hold items.
  */
 public class CurseManager {
 
@@ -61,13 +62,14 @@ public class CurseManager {
     private final Map<UUID, BeastPossession> possessions = new HashMap<>();
     private final Map<UUID, Long> lastBeastAttackMs = new HashMap<>();
     private final Set<UUID> beastMeleeBypass = new HashSet<>();
+    private final Set<UUID> releasingBeast = new HashSet<>();
     private final Random random = new Random();
     private BukkitTask syncTask;
 
     private static final class BeastPossession {
         private Mob body;
-        private ArmorStand camera;
         private Curse curse;
+        private Input lastInput;
     }
 
     public CurseManager(HungerGamesPlugin plugin) {
@@ -127,21 +129,48 @@ public class CurseManager {
         }
         lastStrikeByPlayer.put(attacker.getUniqueId(), now);
 
-        playCondemnationSequence(attacker);
+        if (session.hasBeastForm() && session.isBeastFormExpired()) {
+            expireBeastForm(attacker, session, game, false);
+        }
 
-        int offense = session.getChurchOffenses();
-        if (offense >= 4) {
+        if (session.hasBeastForm()) {
+            playCondemnationEffects(attacker);
+            beginBeastTimer(session);
+            if (!hasBeastForm(attacker)) {
+                Curse beast = session.getBeastCurse();
+                if (beast != null) {
+                    plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
+                        if (attacker.isOnline() && session.hasBeastForm()) {
+                            summonBeastForm(attacker, beast);
+                        }
+                    }, LIFT_TICKS);
+                }
+            }
             plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
                 if (attacker.isOnline()) {
-                    attacker.sendTitle("\u00A75\u00A7k\u00A7lGOD SEES YOU\u00A7r", "", 10, 40, 10);
+                    attacker.sendTitle("\u00A75\u00A7k\u00A7lGOD SEES YOU\u00A7r",
+                            "\u00A77The animal form is renewed", 10, 40, 10);
+                    attacker.sendMessage("\u00A75Your punishment is renewed. Remain a beast for "
+                            + formatBeastDuration() + ".");
                 }
             }, LIFT_TICKS);
             return;
         }
 
-        offense = session.incrementChurchOffenses();
-        Curse curse = Curse.randomForOffense(offense, random);
-        boolean deepening = offense > 1;
+        playCondemnationSequence(attacker);
+
+        int offense = session.getChurchOffenses();
+        Curse curse;
+        boolean deepening;
+        if (offense >= 4) {
+            session.incrementChurchOffenses();
+            curse = Curse.randomForOffense(4, random);
+            deepening = true;
+        } else {
+            offense = session.incrementChurchOffenses();
+            curse = Curse.randomForOffense(offense, random);
+            deepening = offense > 1;
+        }
         plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
             if (!attacker.isOnline()) {
                 return;
@@ -154,6 +183,10 @@ public class CurseManager {
                     "\u00A77Tier " + curse.getTierRoman() + " \u00A78\u2014 \u00A7d" + curse.getDisplayName(),
                     10, 60, 20);
             attacker.sendMessage("\u00A75" + curse.getLore());
+            if (curse.isBeastForm()) {
+                attacker.sendMessage("\u00A77You are a beast for \u00A7f" + formatBeastDuration()
+                        + "\u00A77. Paws cannot build, place, or wield anything.");
+            }
             String verb = deepening
                     ? " spilled blood in the church again \u2014 a new curse stacks: \u00A7d"
                     : " spilled blood in the church \u2014 cursed with \u00A7d";
@@ -167,17 +200,35 @@ public class CurseManager {
         next.apply(player);
         clampHealth(player);
         if (next.isBeastForm()) {
+            beginBeastTimer(session);
             summonBeastForm(player, next);
-            player.sendMessage("\u00A77You may no longer build, place, or wield anything.");
         }
     }
 
-    private void playCondemnationSequence(Player attacker) {
+    private void beginBeastTimer(PlayerSession session) {
+        int seconds = plugin.getPluginConfig().getChurchBeastDurationSeconds();
+        session.startBeastFormDuration(seconds * 1000L);
+    }
+
+    private String formatBeastDuration() {
+        int seconds = plugin.getPluginConfig().getChurchBeastDurationSeconds();
+        if (seconds % 60 == 0) {
+            int minutes = seconds / 60;
+            return minutes == 1 ? "1 minute" : minutes + " minutes";
+        }
+        return seconds + " seconds";
+    }
+
+    private void playCondemnationEffects(Player attacker) {
         Location loc = attacker.getLocation();
         attacker.getWorld().strikeLightningEffect(loc);
         attacker.getWorld().playSound(loc, Sound.ENTITY_LIGHTNING_BOLT_THUNDER, 2.0f, 0.6f);
         attacker.getWorld().playSound(loc, Sound.BLOCK_ANVIL_LAND, 1.5f, 0.5f);
         attacker.setGlowing(true);
+    }
+
+    private void playCondemnationSequence(Player attacker) {
+        playCondemnationEffects(attacker);
         attacker.setVelocity(new Vector(0, 1.6, 0));
         attacker.addPotionEffect(new PotionEffect(PotionEffectType.LEVITATION, LIFT_TICKS, 0, false, false));
 
@@ -192,12 +243,41 @@ public class CurseManager {
     }
 
     // ------------------------------------------------------------------
-    // Beast forms: the cursed player looks from the animal's eyes while
-    // others see only the animal. Movement is steered from player input.
+    // Beast forms: the cursed player rides the animal (others see only the
+    // animal). WASD/jump steer the mob so the disguise stays in sync.
     // ------------------------------------------------------------------
 
     public boolean isBeastCursed(PlayerSession session) {
-        return session != null && session.hasBeastForm();
+        return session != null && session.hasBeastForm() && !session.isBeastFormExpired();
+    }
+
+    public boolean isBeastCursed(Player player) {
+        if (player == null) {
+            return false;
+        }
+        GameManager manager = plugin.getGameManager();
+        if (manager == null) {
+            return false;
+        }
+        Game game = manager.getPlayerGame(player).orElse(null);
+        if (game == null) {
+            return false;
+        }
+        return isBeastCursed(game.getSession(player.getUniqueId()));
+    }
+
+    public boolean isReleasingBeast(Player player) {
+        return player != null && releasingBeast.contains(player.getUniqueId());
+    }
+
+    public void rememberBeastInput(Player player, Input input) {
+        if (player == null || input == null) {
+            return;
+        }
+        BeastPossession possession = possessions.get(player.getUniqueId());
+        if (possession != null) {
+            possession.lastInput = input;
+        }
     }
 
     public Mob getBeastForm(Player player) {
@@ -296,8 +376,29 @@ public class CurseManager {
     }
 
     public void releaseBeastForm(Player player) {
-        removePossessionEntities(player);
-        unbindBeastPlayer(player);
+        UUID playerId = player == null ? null : player.getUniqueId();
+        if (playerId != null) {
+            releasingBeast.add(playerId);
+        }
+        try {
+            Location releaseAt = null;
+            Mob body = getBeastForm(player);
+            if (body != null && body.isValid()) {
+                releaseAt = body.getLocation().clone();
+            }
+            if (player != null && player.isOnline()) {
+                player.leaveVehicle();
+            }
+            removePossessionEntities(player);
+            unbindBeastPlayer(player);
+            if (player != null && player.isOnline() && releaseAt != null && releaseAt.getWorld() != null) {
+                player.teleport(releaseAt);
+            }
+        } finally {
+            if (playerId != null) {
+                releasingBeast.remove(playerId);
+            }
+        }
         if (player != null) {
             lastBeastAttackMs.remove(player.getUniqueId());
             beastMeleeBypass.remove(player.getUniqueId());
@@ -308,13 +409,15 @@ public class CurseManager {
         removePossessionEntities(player);
         Location loc = player.getLocation();
         ensureChunkLoaded(loc);
+        player.removePotionEffect(PotionEffectType.LEVITATION);
+        player.removePotionEffect(PotionEffectType.SLOW_FALLING);
+        player.setFallDistance(0f);
+        player.setGravity(true);
         bindBeastPlayer(player);
 
         Mob beast = (Mob) loc.getWorld().spawnEntity(loc, curse.beastType());
         ArenaEntityUtil.tagBeastForm(beast, player.getUniqueId());
-        beast.setAI(false);
-        beast.setAware(false);
-        beast.setGravity(true);
+        prepareBeastBody(beast);
         beast.setSilent(true);
         beast.setInvulnerable(false);
         beast.setPersistent(true);
@@ -328,31 +431,33 @@ public class CurseManager {
             beast.setHealth(Math.min(beastHealth.getValue(), Math.max(1.0, player.getHealth())));
         }
         beast.teleport(loc);
-        player.hideEntity(plugin, beast);
-
-        ArmorStand camera = loc.getWorld().spawn(beast.getEyeLocation(), ArmorStand.class, stand -> {
-            stand.setInvisible(true);
-            stand.setVisible(false);
-            stand.setSmall(true);
-            stand.setGravity(false);
-            stand.setBasePlate(false);
-            stand.setArms(false);
-            stand.setCollidable(false);
-            stand.setInvulnerable(true);
-            stand.setPersistent(true);
-            stand.setCanPickupItems(false);
-            stand.setSilent(true);
-            ArenaEntityUtil.tagBeastCamera(stand, player.getUniqueId());
-        });
 
         BeastPossession possession = new BeastPossession();
         possession.body = beast;
-        possession.camera = camera;
         possession.curse = curse;
+        possession.lastInput = player.getCurrentInput();
         possessions.put(player.getUniqueId(), possession);
 
-        camera.addPassenger(player);
+        beast.addPassenger(player);
         hidePlayerFromOthers(player);
+    }
+
+    private static void prepareBeastBody(Mob beast) {
+        beast.setAI(true);
+        beast.setAware(false);
+        beast.setGravity(true);
+        beast.setTarget(null);
+        if (beast instanceof Ageable ageable) {
+            ageable.setAdult();
+            ageable.setAgeLock(true);
+        }
+        keepBeastStanding(beast);
+    }
+
+    private static void keepBeastStanding(Mob beast) {
+        if (beast instanceof Sittable sittable && sittable.isSitting()) {
+            sittable.setSitting(false);
+        }
     }
 
     private void tickBeastForms() {
@@ -377,36 +482,38 @@ public class CurseManager {
                 releaseBeastForm(player);
                 continue;
             }
-            if (player.getGameMode() == org.bukkit.GameMode.SPECTATOR) {
+            PlayerSession session = game.getSession(playerId);
+            if (session != null && session.isBeastFormExpired()) {
+                expireBeastForm(player, session, game, !player.isDead() && session.isAlive()
+                        && !session.isSpectator());
+                continue;
+            }
+            if (player.getGameMode() == org.bukkit.GameMode.SPECTATOR || player.isDead()) {
                 continue;
             }
             if (possession.body == null || !possession.body.isValid()) {
+                Curse curse = possession.curse;
                 removePossessionEntities(player);
-                if (!player.isDead() && player.getHealth() > 0) {
+                if (curse != null && curse.beastType() != null && session != null && session.hasBeastForm()) {
+                    summonBeastForm(player, curse);
+                } else if (!player.isDead() && player.getHealth() > 0) {
                     player.setHealth(0);
                 }
                 continue;
             }
-            if (possession.camera == null || !possession.camera.isValid()) {
-                Curse curse = possession.curse;
-                if (curse != null && curse.beastType() != null) {
-                    summonBeastForm(player, curse);
-                } else {
-                    releaseBeastForm(player);
-                }
-                continue;
-            }
             stripBeastInventory(player);
-            enforceBeastBody(player);
+            enforceBeastBody(player, possession);
             steerBeast(player, possession);
-            snapCamera(player, possession);
+            ensureBeastMount(player, possession);
         }
     }
 
     private void steerBeast(Player player, BeastPossession possession) {
         Mob beast = possession.body;
         Curse curse = possession.curse;
-        Input input = player.getCurrentInput();
+        keepBeastStanding(beast);
+        beast.setTarget(null);
+        Input input = possession.lastInput != null ? possession.lastInput : player.getCurrentInput();
         Location look = player.getLocation();
         beast.setRotation(look.getYaw(), look.getPitch());
 
@@ -444,16 +551,32 @@ public class CurseManager {
         beast.setVelocity(move);
     }
 
-    private void snapCamera(Player player, BeastPossession possession) {
-        Location eye = possession.body.getEyeLocation();
-        eye.setYaw(player.getLocation().getYaw());
-        eye.setPitch(player.getLocation().getPitch());
-        possession.camera.teleport(eye);
-        if (!possession.camera.getPassengers().contains(player)) {
-            possession.camera.addPassenger(player);
+    private void ensureBeastMount(Player player, BeastPossession possession) {
+        Mob beast = possession.body;
+        if (beast.getPassengers().contains(player)) {
+            player.setGravity(true);
+            return;
         }
-        if (player.canSee(possession.body)) {
-            player.hideEntity(plugin, possession.body);
+        if (player.getVehicle() != null && !player.getVehicle().equals(beast)) {
+            releasingBeast.add(player.getUniqueId());
+            try {
+                player.leaveVehicle();
+            } finally {
+                releasingBeast.remove(player.getUniqueId());
+            }
+        }
+        beast.addPassenger(player);
+        if (!beast.getPassengers().contains(player)) {
+            player.setGravity(false);
+            Location dest = beast.getLocation().clone();
+            dest.setYaw(player.getLocation().getYaw());
+            dest.setPitch(player.getLocation().getPitch());
+            player.teleport(dest);
+        } else {
+            player.setGravity(true);
+        }
+        if (!player.canSee(beast)) {
+            player.showEntity(plugin, beast);
         }
     }
 
@@ -470,7 +593,7 @@ public class CurseManager {
         hidePlayerFromOthers(player);
     }
 
-    private void enforceBeastBody(Player player) {
+    private void enforceBeastBody(Player player, BeastPossession possession) {
         if (!player.isInvisible()) {
             player.setInvisible(true);
         }
@@ -478,9 +601,13 @@ public class CurseManager {
             player.setCollidable(false);
         }
         player.setCanPickupItems(false);
+        boolean mounted = possession.body != null && possession.body.getPassengers().contains(player);
         AttributeInstance scale = player.getAttribute(Attribute.SCALE);
-        if (scale != null && Math.abs(scale.getBaseValue() - CAMERA_SCALE) > 0.01) {
-            scale.setBaseValue(CAMERA_SCALE);
+        if (scale != null) {
+            double desired = mounted ? CAMERA_SCALE : 1.0;
+            if (Math.abs(scale.getBaseValue() - desired) > 0.01) {
+                scale.setBaseValue(desired);
+            }
         }
         hidePlayerFromOthers(player);
     }
@@ -493,6 +620,7 @@ public class CurseManager {
         player.setCollidable(true);
         player.setSilent(false);
         player.setCanPickupItems(true);
+        player.setGravity(true);
         AttributeInstance scale = player.getAttribute(Attribute.SCALE);
         if (scale != null) {
             scale.setBaseValue(1.0);
@@ -524,11 +652,8 @@ public class CurseManager {
         if (possession == null) {
             return;
         }
-        if (possession.camera != null && possession.camera.isValid()) {
-            possession.camera.eject();
-            possession.camera.remove();
-        }
         if (possession.body != null && possession.body.isValid()) {
+            possession.body.eject();
             possession.body.remove();
         }
     }
@@ -566,6 +691,12 @@ public class CurseManager {
             return;
         }
         for (PlayerSession session : game.getSessions().values()) {
+            if (session.hasBeastForm() && session.isBeastFormExpired()) {
+                Player expired = session.getOnlinePlayer();
+                boolean restoreKit = expired != null && expired.isOnline() && !expired.isDead()
+                        && session.isAlive() && !session.isSpectator() && !session.isDisconnected();
+                expireBeastForm(expired, session, game, restoreKit);
+            }
             Player player = session.getPlayer();
             if (player == null || !player.isOnline() || !session.isAlive() || session.isDisconnected()) {
                 continue;
@@ -578,11 +709,49 @@ public class CurseManager {
         }
     }
 
+    /**
+     * Ends the timed animal form and restores human movement. Remaining stacked
+     * curses (glow, hunger, etc.) stay in effect.
+     */
+    public void expireBeastForm(Player player, PlayerSession session, Game game, boolean restoreKit) {
+        if (session == null) {
+            return;
+        }
+        Curse beast = session.getBeastCurse();
+        releaseBeastForm(player);
+        if (beast != null) {
+            session.removeCurse(beast);
+            if (player != null && player.isOnline()) {
+                beast.remove(player);
+            }
+        }
+        session.clearBeastFormExpiry();
+        if (player == null || !player.isOnline()) {
+            return;
+        }
+        clampHealth(player);
+        if (restoreKit && game != null
+                && (game.getState() == GameState.ACTIVE || game.getState() == GameState.GRACE)
+                && session.isAlive() && !session.isSpectator()) {
+            MatchKit.apply(player);
+            player.sendTitle("\u00A7aThe curse lifts", "\u00A77You are yourself again", 10, 40, 15);
+            player.sendMessage("\u00A7aGod's punishment fades. You can move and fight as a person again.");
+        }
+    }
+
     /** Re-applies stacked curses after death strips attribute modifiers. */
     public void reapplyOnRespawn(PlayerSession session) {
         Player player = session.getPlayer();
         if (player == null || !player.isOnline() || session.getCurses().isEmpty()) {
             return;
+        }
+        if (session.hasBeastForm() && session.isBeastFormExpired()) {
+            Game game = plugin.getGameManager() != null
+                    ? plugin.getGameManager().getPlayerGame(player).orElse(null) : null;
+            expireBeastForm(player, session, game, true);
+            if (session.getCurses().isEmpty()) {
+                return;
+            }
         }
         Curse beast = null;
         for (Curse curse : session.getCurses()) {
@@ -592,7 +761,7 @@ public class CurseManager {
             }
         }
         clampHealth(player);
-        if (beast != null) {
+        if (beast != null && !session.isBeastFormExpired()) {
             summonBeastForm(player, beast);
         }
     }
@@ -605,6 +774,7 @@ public class CurseManager {
         lastStrikeByPlayer.clear();
         lastBeastAttackMs.clear();
         beastMeleeBypass.clear();
+        releasingBeast.clear();
     }
 
     /** Undoes every stacked curse on this participant. Safe to call more than once. */
@@ -643,6 +813,7 @@ public class CurseManager {
         player.setCollidable(true);
         player.setSilent(false);
         player.setCanPickupItems(true);
+        player.setGravity(true);
         player.setGlowing(false);
         for (Player other : plugin.getServer().getOnlinePlayers()) {
             if (!other.getUniqueId().equals(player.getUniqueId())) {

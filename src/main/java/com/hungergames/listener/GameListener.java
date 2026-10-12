@@ -16,6 +16,7 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Sound;
 import org.bukkit.block.Block;
+import org.bukkit.entity.AreaEffectCloud;
 import org.bukkit.entity.Creeper;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
@@ -24,24 +25,32 @@ import org.bukkit.entity.PolarBear;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Projectile;
 import org.bukkit.entity.TNTPrimed;
+import org.bukkit.entity.ThrownPotion;
 import org.bukkit.entity.Villager;
+import org.bukkit.projectiles.ProjectileSource;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
+import org.bukkit.event.entity.AreaEffectCloudApplyEvent;
 import org.bukkit.event.entity.CreatureSpawnEvent;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityDeathEvent;
+import org.bukkit.event.entity.EntityDismountEvent;
 import org.bukkit.event.entity.EntityExplodeEvent;
 import org.bukkit.event.entity.EntityPickupItemEvent;
 import org.bukkit.event.entity.EntityRegainHealthEvent;
 import org.bukkit.event.entity.EntityShootBowEvent;
 import org.bukkit.event.entity.EntityTargetLivingEntityEvent;
 import org.bukkit.event.entity.FoodLevelChangeEvent;
+import org.bukkit.event.entity.LingeringPotionSplashEvent;
 import org.bukkit.event.entity.PlayerDeathEvent;
+import org.bukkit.event.entity.PotionSplashEvent;
+import org.bukkit.event.entity.ProjectileHitEvent;
+import org.bukkit.event.entity.ProjectileLaunchEvent;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.inventory.InventoryOpenEvent;
@@ -50,9 +59,12 @@ import org.bukkit.event.player.PlayerAnimationType;
 import org.bukkit.event.player.PlayerDropItemEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.player.PlayerFishEvent;
+import org.bukkit.event.player.PlayerInputEvent;
 import org.bukkit.event.player.PlayerItemConsumeEvent;
 import org.bukkit.event.player.PlayerItemHeldEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerRiptideEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerPickupArrowEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
@@ -119,7 +131,20 @@ public class GameListener implements Listener {
         if (damager instanceof Player player) {
             return player;
         }
-        if (damager instanceof Projectile projectile && projectile.getShooter() instanceof Player player) {
+        if (damager instanceof Projectile projectile) {
+            return playerFromSource(projectile.getShooter());
+        }
+        if (damager instanceof AreaEffectCloud cloud) {
+            return playerFromSource(cloud.getSource());
+        }
+        return null;
+    }
+
+    private static Player playerFromSource(ProjectileSource source) {
+        if (source instanceof Player player) {
+            return player;
+        }
+        if (source instanceof Projectile projectile && projectile.getShooter() instanceof Player player) {
             return player;
         }
         return null;
@@ -231,9 +256,10 @@ public class GameListener implements Listener {
 
     /**
      * Violence in or into a church condemns the aggressor: lifted into the air
-     * under divine lightning and branded with a persistent curse. Covers melee
-     * inside the nave and arrows (or other projectiles) shot at sanctuary from
-     * outside — including through walls opened by volcano TNT.
+     * under divine lightning and branded with a curse. Covers melee inside the
+     * nave and any projectile launched from inside or into sanctuary — including
+     * through walls opened by volcano TNT. The aggressor is the shooter/attacker,
+     * never the victim.
      */
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onChurchPvP(EntityDamageByEntityEvent event) {
@@ -241,10 +267,20 @@ public class GameListener implements Listener {
             return;
         }
         Player attacker = extractPlayerDamager(event.getDamager());
-        if (attacker == null || victim.getUniqueId().equals(attacker.getUniqueId())) {
+        tryCondemnChurchAttack(attacker, victim, ArenaEntityUtil.isChurchProjectile(event.getDamager()));
+    }
+
+    /**
+     * Records whether a projectile was fired from inside a church so later hits
+     * still count even if the shooter has left, or the victim is outside.
+     */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onChurchProjectileLaunch(ProjectileLaunchEvent event) {
+        Projectile projectile = event.getEntity();
+        if (!(projectile.getShooter() instanceof Player shooter)) {
             return;
         }
-        plugin.getGameManager().getPlayerGame(attacker).ifPresent(game -> {
+        plugin.getGameManager().getPlayerGame(shooter).ifPresent(game -> {
             if (game.getState() != GameState.ACTIVE) {
                 return;
             }
@@ -252,8 +288,77 @@ public class GameListener implements Listener {
             if (arena == null) {
                 return;
             }
+            if (plugin.getCurseManager().isInsideChurch(arena, shooter.getLocation())) {
+                ArenaEntityUtil.tagChurchProjectile(projectile);
+            }
+        });
+    }
+
+    /**
+     * Generic projectile hits (arrows, snowballs, eggs, tridents, fire charges,
+     * ender pearls, fireworks, etc.), including 0-damage projectiles that never
+     * fire a damage event.
+     */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onChurchProjectileHit(ProjectileHitEvent event) {
+        if (!(event.getHitEntity() instanceof Player victim)) {
+            return;
+        }
+        Projectile projectile = event.getEntity();
+        Player attacker = extractPlayerDamager(projectile);
+        tryCondemnChurchAttack(attacker, victim, ArenaEntityUtil.isChurchProjectile(projectile));
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onChurchPotionSplash(PotionSplashEvent event) {
+        ThrownPotion potion = event.getPotion();
+        Player attacker = extractPlayerDamager(potion);
+        boolean fromChurch = ArenaEntityUtil.isChurchProjectile(potion);
+        for (LivingEntity affected : event.getAffectedEntities()) {
+            if (affected instanceof Player victim) {
+                tryCondemnChurchAttack(attacker, victim, fromChurch);
+            }
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onChurchLingeringSplash(LingeringPotionSplashEvent event) {
+        if (ArenaEntityUtil.isChurchProjectile(event.getEntity()) && event.getAreaEffectCloud() != null) {
+            ArenaEntityUtil.tagChurchProjectile(event.getAreaEffectCloud());
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onChurchCloudApply(AreaEffectCloudApplyEvent event) {
+        AreaEffectCloud cloud = event.getEntity();
+        Player attacker = extractPlayerDamager(cloud);
+        boolean fromChurch = ArenaEntityUtil.isChurchProjectile(cloud);
+        for (LivingEntity affected : event.getAffectedEntities()) {
+            if (affected instanceof Player victim) {
+                tryCondemnChurchAttack(attacker, victim, fromChurch);
+            }
+        }
+    }
+
+    private void tryCondemnChurchAttack(Player attacker, Player victim, boolean launchedFromChurch) {
+        if (attacker == null || victim == null || victim.getUniqueId().equals(attacker.getUniqueId())) {
+            return;
+        }
+        plugin.getGameManager().getPlayerGame(attacker).ifPresent(game -> {
+            if (game.getState() != GameState.ACTIVE) {
+                return;
+            }
+            Game victimGame = plugin.getGameManager().getPlayerGame(victim).orElse(null);
+            if (!game.equals(victimGame)) {
+                return;
+            }
+            Arena arena = game.getArena();
+            if (arena == null) {
+                return;
+            }
             CurseManager curses = plugin.getCurseManager();
-            if (curses.isInsideChurch(arena, attacker.getLocation())
+            if (launchedFromChurch
+                    || curses.isInsideChurch(arena, attacker.getLocation())
                     || curses.isInsideChurch(arena, victim.getLocation())) {
                 curses.condemn(game, attacker);
             }
@@ -299,12 +404,7 @@ public class GameListener implements Listener {
     // ------------------------------------------------------------------
 
     private boolean isBeast(Player player) {
-        return plugin.getGameManager().getPlayerGame(player)
-                .map(game -> {
-                    PlayerSession session = game.getSession(player.getUniqueId());
-                    return session != null && session.hasBeastForm();
-                })
-                .orElse(false);
+        return plugin.getCurseManager().isBeastCursed(player);
     }
 
     /** Beasts cannot break blocks (paws lack fingers). */
@@ -409,10 +509,31 @@ public class GameListener implements Listener {
         if (!isBeast(event.getPlayer())) {
             return;
         }
-        ItemStack item = event.getItem();
-        if (item != null && !item.getType().isAir()) {
+        if (event.getAction() != Action.LEFT_CLICK_AIR) {
             event.setCancelled(true);
+        }
+        plugin.getCurseManager().stripBeastInventory(event.getPlayer());
+    }
+
+    @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
+    public void onBeastProjectileLaunch(ProjectileLaunchEvent event) {
+        if (event.getEntity().getShooter() instanceof Player player && isBeast(player)) {
+            event.setCancelled(true);
+            plugin.getCurseManager().stripBeastInventory(player);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
+    public void onBeastRiptide(PlayerRiptideEvent event) {
+        if (isBeast(event.getPlayer())) {
             plugin.getCurseManager().stripBeastInventory(event.getPlayer());
+        }
+    }
+
+    @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
+    public void onBeastFish(PlayerFishEvent event) {
+        if (isBeast(event.getPlayer())) {
+            event.setCancelled(true);
         }
     }
 
@@ -426,8 +547,24 @@ public class GameListener implements Listener {
 
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
     public void onBeastDismount(VehicleExitEvent event) {
-        if (event.getExited() instanceof Player player && isBeast(player)) {
+        if (event.getExited() instanceof Player player && isBeast(player)
+                && !plugin.getCurseManager().isReleasingBeast(player)) {
             event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
+    public void onBeastEntityDismount(EntityDismountEvent event) {
+        if (event.getEntity() instanceof Player player && isBeast(player)
+                && !plugin.getCurseManager().isReleasingBeast(player)) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onBeastInput(PlayerInputEvent event) {
+        if (isBeast(event.getPlayer())) {
+            plugin.getCurseManager().rememberBeastInput(event.getPlayer(), event.getInput());
         }
     }
 
@@ -438,7 +575,7 @@ public class GameListener implements Listener {
         }
     }
 
-    /** Claw/fang swings while bound to the animal camera. */
+    /** Claw/fang swings while controlling the animal. */
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onBeastSwing(PlayerAnimationEvent event) {
         if (event.getAnimationType() != PlayerAnimationType.ARM_SWING) {
@@ -450,7 +587,10 @@ public class GameListener implements Listener {
         plugin.getCurseManager().tryBeastSwing(event.getPlayer());
     }
 
-    /** Suppress vanilla punches; claw damage is applied from the animal body. */
+    /**
+     * Suppress vanilla melee, ranged, and item damage; claw damage is applied
+     * from the animal body via {@link CurseManager#tryBeastSwing(Player)}.
+     */
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onBeastAttack(EntityDamageByEntityEvent event) {
         Player attacker = extractPlayerDamager(event.getDamager());
@@ -460,9 +600,8 @@ public class GameListener implements Listener {
         if (plugin.getCurseManager().isBeastMeleeBypass(attacker)) {
             return;
         }
-        if (event.getDamager() instanceof Player) {
-            event.setCancelled(true);
-        }
+        event.setCancelled(true);
+        plugin.getCurseManager().stripBeastInventory(attacker);
     }
 
     /** Cats always land on their feet. */

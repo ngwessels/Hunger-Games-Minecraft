@@ -27,6 +27,7 @@ public class PluginConfig {
     private double borderShrinkPerTick;
     private boolean stripCustomOnMatchEnd;
     private int customItemGlobalWeight;
+    private int churchBeastDurationSeconds;
     private Material lootBoxBlockType;
     private int lootBoxMinDistanceFromCenter;
     private int lootBoxMinSpacing;
@@ -83,6 +84,7 @@ public class PluginConfig {
         borderShrinkPerTick = config.getDouble("game.border-shrink.shrink-per-tick", 0.5);
         stripCustomOnMatchEnd = config.getBoolean("loot.strip-custom-on-match-end", true);
         customItemGlobalWeight = config.getInt("loot.custom-item-global-weight", 5);
+        churchBeastDurationSeconds = Math.max(1, config.getInt("game.church-beast-duration-seconds", 120));
         lootBoxMinDistanceFromCenter = config.getInt("loot.boxes.min-distance-from-center", 0);
         lootBoxMinSpacing = config.getInt("loot.boxes.min-spacing", 8);
         lootBoxDensityPer100Radius = config.getDouble("loot.boxes.density-per-100-radius", 6);
@@ -202,6 +204,10 @@ public class PluginConfig {
 
     public int getCustomItemGlobalWeight() {
         return customItemGlobalWeight;
+    }
+
+    public int getChurchBeastDurationSeconds() {
+        return churchBeastDurationSeconds;
     }
 
     public Material getLootBoxBlockType() {

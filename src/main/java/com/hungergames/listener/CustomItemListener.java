@@ -38,6 +38,10 @@ public class CustomItemListener implements Listener {
             return;
         }
         Player player = event.getPlayer();
+        if (plugin.getCurseManager().isBeastCursed(player)) {
+            event.setCancelled(true);
+            return;
+        }
         ItemStack item = event.getItem();
         if (item == null) {
             return;
@@ -91,6 +95,9 @@ public class CustomItemListener implements Listener {
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onAttack(EntityDamageByEntityEvent event) {
         if (!(event.getDamager() instanceof Player attacker)) {
+            return;
+        }
+        if (plugin.getCurseManager().isBeastCursed(attacker)) {
             return;
         }
         if (!GameCombatUtil.isActiveCombatant(plugin, attacker)) {

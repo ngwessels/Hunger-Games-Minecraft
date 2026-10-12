@@ -23,6 +23,9 @@ game:
   lava-flow-speed-multiplier: 1.5
   # Multiplier for in-match health regeneration (2.0 = 100% faster / double speed).
   match-heal-multiplier: 2.0
+  # How long a church "God's punishment" animal form lasts (seconds). Death during
+  # the window respawns them still as the animal with remaining time continuing.
+  church-beast-duration-seconds: 120
   # Border shrink is off unless a gamemode sets borderShrink: true (or borderShrink.enabled: true)
   border-shrink:
     duration-seconds: 90

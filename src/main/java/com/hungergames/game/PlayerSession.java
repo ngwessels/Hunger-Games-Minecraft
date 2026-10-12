@@ -38,6 +38,7 @@ public class PlayerSession {
     private Location cachedRespawnLocation;
     private final List<Curse> curses = new ArrayList<>();
     private int churchOffenses;
+    private long beastFormExpiresAtMillis;
     private final List<BlockSnapshot> tempRespawnBlocks = new ArrayList<>();
 
     public PlayerSession(Player player) {
@@ -292,9 +293,30 @@ public class PlayerSession {
         }
     }
 
+    public void removeCurse(Curse curse) {
+        curses.remove(curse);
+    }
+
     public void clearCurses() {
         curses.clear();
         churchOffenses = 0;
+        clearBeastFormExpiry();
+    }
+
+    public void startBeastFormDuration(long durationMs) {
+        beastFormExpiresAtMillis = System.currentTimeMillis() + Math.max(0L, durationMs);
+    }
+
+    public long getBeastFormExpiresAtMillis() {
+        return beastFormExpiresAtMillis;
+    }
+
+    public boolean isBeastFormExpired() {
+        return beastFormExpiresAtMillis > 0L && System.currentTimeMillis() >= beastFormExpiresAtMillis;
+    }
+
+    public void clearBeastFormExpiry() {
+        beastFormExpiresAtMillis = 0L;
     }
 
     /** Church PvP offenses this match; each one raises the curse tier. */

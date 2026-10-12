@@ -97,8 +97,9 @@ settlements:
   garrisonRespawnSeconds: 45
   villagerCount: 5
   chestLootTierFallback: hard
-  # PvP in or into a village church (including arrows shot from outside)
-  # condemns the aggressor. Curses stack by offense: tier 1, then 2, 3, 4.
+  # PvP in or into a village church (including any projectile launched from
+  # inside or shot into the nave) condemns the aggressor. Curses stack by
+  # offense: tier 1, then 2, 3, then a timed animal form at 4.
   condemnationEnabled: true
 # Village (iron golem) and creeper rage systems. Villager hits summon charged
 # guardians while the attacker stays near a village; creeper hits start a
