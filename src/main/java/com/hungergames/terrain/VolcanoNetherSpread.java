@@ -51,6 +51,11 @@ public class VolcanoNetherSpread {
         return convertedRadius;
     }
 
+    /** Allows ice recapture to pull the volcanic front back during biome war. */
+    public void setConvertedRadius(int radius) {
+        this.convertedRadius = Math.max(VolcanoCaldera.NO_TREE_RADIUS, radius);
+    }
+
     /** Horizontal footprint of nether growth, with a noisy edge so the front is not a perfect circle. */
     public boolean contains(int x, int z) {
         double dist = CircleUtil.distanceFromCenter(cx, cz, x, z);
@@ -496,7 +501,7 @@ public class VolcanoNetherSpread {
         return PROTECTED.contains(block.getType());
     }
 
-    static boolean isNetherGround(Material type) {
+    public static boolean isNetherGround(Material type) {
         return type == Material.NETHERRACK
                 || type == Material.MAGMA_BLOCK
                 || type == Material.BLACKSTONE

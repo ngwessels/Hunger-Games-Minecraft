@@ -625,6 +625,42 @@ public class GameListener implements Listener {
     }
 
     /**
+     * Ice and volcano faction mobs prefer each other so the war plays out
+     * without waiting on a player to walk by. Piglin hunt locks still win.
+     */
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    public void onFactionTarget(EntityTargetLivingEntityEvent event) {
+        if (!(event.getEntity() instanceof Mob mob)) {
+            return;
+        }
+        boolean ice = ArenaEntityUtil.isIceFactionMob(mob);
+        boolean volcano = ArenaEntityUtil.isVolcanoFactionMob(mob);
+        if (!ice && !volcano) {
+            return;
+        }
+        if (ArenaEntityUtil.getVolcanoPiglinHuntOwner(mob) != null) {
+            return;
+        }
+        LivingEntity proposed = event.getTarget();
+        if (ice && proposed != null && ArenaEntityUtil.isVolcanoAlignedMob(proposed)) {
+            return;
+        }
+        if (volcano && proposed != null && ArenaEntityUtil.isIceFactionMob(proposed)) {
+            return;
+        }
+        if (proposed instanceof Player) {
+            return;
+        }
+        if (ice && proposed != null && ArenaEntityUtil.isIceFactionMob(proposed)) {
+            event.setCancelled(true);
+            return;
+        }
+        if (volcano && proposed != null && ArenaEntityUtil.isVolcanoAlignedMob(proposed)) {
+            event.setCancelled(true);
+        }
+    }
+
+    /**
      * Arena polar bears only hunt match players and never idle when a player is nearby.
      */
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
@@ -827,7 +863,17 @@ public class GameListener implements Listener {
         }
         if (event.getEntity() instanceof PolarBear bear
                 && !ArenaEntityUtil.isArcticMob(bear)
+                && !ArenaEntityUtil.isIceFactionMob(bear)
                 && event.getSpawnReason() != CreatureSpawnEvent.SpawnReason.CUSTOM) {
+            event.setCancelled(true);
+            return;
+        }
+        Game game = gameForWorld(location.getWorld());
+        if (game != null
+                && !plugin.getTerrainPhaseManager().allowsHostileSpawning(game)
+                && ArenaEntityUtil.isHostileMob(event.getEntity())
+                && event.getEntity() instanceof LivingEntity living
+                && !ArenaEntityUtil.isPeacefulStartExempt(living)) {
             event.setCancelled(true);
             return;
         }
@@ -835,6 +881,15 @@ public class GameListener implements Listener {
             return;
         }
         event.setCancelled(true);
+    }
+
+    private Game gameForWorld(org.bukkit.World world) {
+        for (Game game : plugin.getGameManager().getRunningGames()) {
+            if (game.getArena().getWorld() != null && game.getArena().getWorld().equals(world)) {
+                return game;
+            }
+        }
+        return null;
     }
 
     private boolean isArenaWorld(String worldName) {

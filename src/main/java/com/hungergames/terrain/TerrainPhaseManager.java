@@ -22,9 +22,26 @@ public class TerrainPhaseManager {
     private long phaseEndMillis;
     private int resolvedDurationSeconds;
     private Game activeGame;
+    private VolcanoBiomeWar biomeWar;
+    private VolcanoBiomeFactions biomeFactions;
 
     public TerrainPhaseManager(HungerGamesPlugin plugin) {
         this.plugin = plugin;
+    }
+
+    /**
+     * Grace-time hook: freeze the volcano map to ice and remember faction
+     * controllers before the FOREST/ERUPTION sequence starts.
+     */
+    public void onMatchBegin(Game game) {
+        activeGame = game;
+        resetBiomeControllers();
+        if (game == null || !"volcano".equalsIgnoreCase(game.getGameMode().getInitialTerrain())) {
+            return;
+        }
+        biomeWar = new VolcanoBiomeWar(plugin);
+        biomeWar.start(game, game.getArena());
+        biomeFactions = new VolcanoBiomeFactions(plugin);
     }
 
     public void start(Game game) {
@@ -96,6 +113,23 @@ public class TerrainPhaseManager {
         phaseEndMillis = 0;
         resolvedDurationSeconds = 0;
         activeGame = null;
+        resetBiomeControllers();
+    }
+
+    private void resetBiomeControllers() {
+        if (biomeWar != null) {
+            biomeWar.reset();
+            biomeWar = null;
+        }
+        biomeFactions = null;
+    }
+
+    public VolcanoBiomeWar getBiomeWar() {
+        return biomeWar;
+    }
+
+    public VolcanoBiomeFactions getBiomeFactions() {
+        return biomeFactions;
     }
 
     public int getResolvedDurationSeconds() {
@@ -180,14 +214,16 @@ public class TerrainPhaseManager {
 
     /**
      * Hostile mobs stay off during grace and the opening FOREST phase so
-     * players are not dumped into creepers, nether spawns, or garrisons.
+     * players are not dumped into creepers, nether spawns, garrisons, or
+     * ice/volcano faction armies. The gate is the current phase type, not a
+     * timer — volcano/nether phases opt in by not being FOREST.
      */
     public boolean allowsHostileSpawning(Game game) {
         if (game == null || game.getState() != GameState.ACTIVE) {
             return false;
         }
         if (currentConfig == null) {
-            return true;
+            return false;
         }
         return !"FOREST".equalsIgnoreCase(currentConfig.getType());
     }

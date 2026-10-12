@@ -1,6 +1,8 @@
 package com.hungergames.gamemode;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 public class TerrainPhaseConfig {
@@ -46,5 +48,37 @@ public class TerrainPhaseConfig {
             return number.doubleValue();
         }
         return defaultValue;
+    }
+
+    public boolean getBoolean(String key, boolean defaultValue) {
+        Object value = params.get(key);
+        if (value instanceof Boolean bool) {
+            return bool;
+        }
+        if (value instanceof Number number) {
+            return number.intValue() != 0;
+        }
+        if (value instanceof String raw) {
+            if ("true".equalsIgnoreCase(raw) || "yes".equalsIgnoreCase(raw) || "1".equals(raw)) {
+                return true;
+            }
+            if ("false".equalsIgnoreCase(raw) || "no".equalsIgnoreCase(raw) || "0".equals(raw)) {
+                return false;
+            }
+        }
+        return defaultValue;
+    }
+
+    public List<String> getStringList(String key) {
+        Object raw = params.get(key);
+        List<String> result = new ArrayList<>();
+        if (raw instanceof List<?> list) {
+            for (Object item : list) {
+                if (item != null) {
+                    result.add(String.valueOf(item));
+                }
+            }
+        }
+        return result;
     }
 }

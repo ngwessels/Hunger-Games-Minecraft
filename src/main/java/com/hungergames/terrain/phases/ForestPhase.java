@@ -28,7 +28,7 @@ public class ForestPhase implements TerrainPhase {
         continuous = PhaseDurationResolver.isContinuous(config);
         int resolved = plugin.getTerrainPhaseManager().getResolvedDurationSeconds();
         endTime = continuous ? Long.MAX_VALUE : System.currentTimeMillis() + resolved * 1000L;
-        ArenaEntityUtil.clearUntaggedHostiles(arena.getWorld(), arena);
+        ArenaEntityUtil.clearPeacefulStartHostiles(arena.getWorld(), arena);
     }
 
     @Override

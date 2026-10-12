@@ -15,8 +15,9 @@ import java.util.List;
 import java.util.Random;
 
 /**
- * Outer frozen annulus on volcano arenas: snow plains, sea ice, glaciers,
- * and polar-bear sites beyond the inner forest radius.
+ * Frozen terrain on volcano arenas: snow plains, sea ice, glaciers, and
+ * polar-bear sites. Default is an outer ring beyond the forest radius;
+ * {@code iceWorldStart} ices the whole disc except the caldera.
  */
 public final class ArcticRing {
 
@@ -31,33 +32,40 @@ public final class ArcticRing {
             return false;
         }
         ArcticConfig config = gameMode.getArctic();
-        return config != null && config.isEnabled()
-                && gameMode.getArenaRadius() > gameMode.getForestRadius();
+        if (config == null || !config.isEnabled()) {
+            return false;
+        }
+        if (config.isIceWorldStart()) {
+            return true;
+        }
+        return gameMode.getArenaRadius() > gameMode.getForestRadius();
     }
 
     public static boolean isArcticColumn(Arena arena, GameMode gameMode, int x, int z) {
-        if (!isActive(arena, gameMode)) {
-            return false;
-        }
-        double dist = CircleUtil.distanceFromCenter(arena.getCenterX(), arena.getCenterZ(), x, z);
-        return dist >= gameMode.getForestRadius();
+        return blendFactor(arena, gameMode, x, z) >= 1;
     }
 
-    /** 0 inside the forest, 1 fully arctic, ramp across the blend band. */
+    /** 0 inside the forest/caldera, 1 fully arctic, ramp across the blend band. */
     public static double blendFactor(Arena arena, GameMode gameMode, int x, int z) {
         if (!isActive(arena, gameMode)) {
             return 0;
         }
-        int forest = gameMode.getForestRadius();
-        int blend = gameMode.getArctic().getBlendWidth();
+        ArcticConfig config = gameMode.getArctic();
+        int blend = config.getBlendWidth();
         double dist = CircleUtil.distanceFromCenter(arena.getCenterX(), arena.getCenterZ(), x, z);
-        if (dist <= forest - blend) {
+        int inner;
+        if (config.isIceWorldStart()) {
+            inner = VolcanoCaldera.NO_TREE_RADIUS;
+        } else {
+            inner = gameMode.getForestRadius();
+        }
+        if (dist <= inner - blend) {
             return 0;
         }
-        if (dist >= forest) {
+        if (dist >= inner) {
             return 1;
         }
-        return (dist - (forest - blend)) / blend;
+        return (dist - (inner - blend)) / blend;
     }
 
     public static void refreshLayout(Arena arena, GameMode gameMode) {

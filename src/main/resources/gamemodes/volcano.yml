@@ -1,7 +1,7 @@
 id: volcano
 displayName: "Volcano"
 difficulty: HARD
-description: "A forest around a lava caldera — the volcano grows and the woods turn to nether. Outer ice ring melts into tsunami and lava."
+description: "An ice world around a lava caldera. The volcano rises and fights the ice for 15–20 minutes until nothing frozen remains."
 minPlayers: 1
 maxPlayers: 24
 gracePeriodSeconds: 30
@@ -25,9 +25,11 @@ treePlacement:
     - oak
     - spruce
     - birch
-# Outer frozen ring beyond the forest. Inner forestRadius stays the original volcano woods.
+# Ice world: the whole disc except the caldera generates frozen. forestRadius
+# still drives spawn ring, settlements, and the outer glacier belt.
 arctic:
   enabled: true
+  iceWorldStart: true
   forestRadius: 300
   blendWidth: 12
   polarBearCount: 8
@@ -145,10 +147,31 @@ terrainPhases:
     netherSpreadBudgetRadiusScale: 0.04
     netherSpreadScanDepth: 8
     netherSpreadScanHeightAbove: 40
+    # Ice vs volcano tug-of-war. Dominance follows match progress plus a decaying
+    # sine so ice recaptures ground mid-match and still loses by the end.
+    biomeWarEnabled: 1
+    biomeWarProgressPower: 1.15
+    biomeWarOscillationCycles: 3.0
+    biomeWarOscillationAmplitude: 0.22
+    biomeWarOscillationDampening: 1.4
+    biomeWarIceGoneMatchRatio: 0.92
+    biomeWarIceRecaptureEnabled: 1
+    biomeWarFreezeColumnsPerTick: 400
+    biomeWarRecaptureColumnsPerTick: 56
     arcticMeltLagBlocks: 10
-    arcticTsunamiInlandBlocks: 16
-    arcticTsunamiDurationTicks: 40
-    arcticTsunamiMinHeight: 2
+    # 0 = auto (glacier toward caldera, stopping at the rim). Traveling wave, not a pulse.
+    arcticTsunamiInlandBlocks: 0
+    # Launch when the lava front is this far from the glacier so ice remains to run over.
+    arcticTsunamiLeadBlocks: 100
+    arcticTsunamiSpeedBlocksPerTick: 2
+    arcticTsunamiRecedeSpeedBlocksPerTick: 3
+    arcticTsunamiWaveLengthBlocks: 12
+    arcticTsunamiTickInterval: 1
+    arcticTsunamiBlocksPerTick: 180
+    arcticTsunamiMaxConcurrent: 3
+    # Hold at max inland before the water pulls back to sea.
+    arcticTsunamiDurationTicks: 16
+    arcticTsunamiMinHeight: 3
     arcticTsunamiMaxHeight: 10
     arcticCalvingFallingIce: 5
     # Floating glowstone blobs in converted nether, like nether-cavern veins
@@ -169,7 +192,29 @@ terrainPhases:
     netherIslandMaxRadius: 8
     netherIslandMinThickness: 2
     netherIslandMaxThickness: 4
+    # Ice vs volcano mob armies. Caps lerp with volcanic dominance (ice dies out).
+    factionWarEnabled: 1
+    iceFactionMaxMobsStart: 12
+    iceFactionMaxMobsEnd: 0
+    volcanoFactionMaxMobsStart: 3
+    volcanoFactionMaxMobsEnd: 14
+    iceFactionSpawnChancePerTick: 0.12
+    volcanoFactionSpawnChancePerTick: 0.10
+    iceFactionFollowRange: 40
+    volcanoFactionFollowRange: 36
+    factionAggroRange: 28
+    iceFactionMobs:
+      - POLAR_BEAR
+      - STRAY
+      - WOLF
+    volcanoFactionMobs:
+      - BLAZE
+      - MAGMA_CUBE
+      - WITHER_SKELETON
+      - PIGLIN_BRUTE
+      - HOGLIN
     # Overworld hostiles (zombies, skeletons, spiders) in remaining forest
+    # when factionWarEnabled is 0.
     maxForestMobs: 6
     forestMobSpawnChancePerTick: 0.04
     # Hot netherrack ignites adjacent logs/leaves as the cone expands
@@ -201,6 +246,9 @@ terrainPhases:
     # Rate ramps with match / cone height. Fuse is travel time to the landing spot.
     tntFuseMinTicks: 35
     tntFuseMaxTicks: 80
+    tntFuseMaxTicksEnd: 170
+    tntMaxSpeedStart: 4.8
+    tntMaxSpeedEnd: 8.4
     maxHostileMobs: 6
     mobSpawnMinIntensity: 0.35
     mobSpawnChancePerTick: 0.05
@@ -220,11 +268,19 @@ terrainPhases:
     ghastSpawnRadiusMax: 40
     ghastMinHeightAboveVent: 5
     ghastMaxHeightAboveVent: 16
-    # TNT/sec from eruption start to end-game. Each shot is aimed at a random
-    # forest cell so blasts land throughout the map instead of in the lava cone.
-    projectileRatePerSecondMin: 8
-    projectileRatePerSecondMax: 22
-    projectileMaxPerTick: 8
+    # TNT/sec (phase ticks at 1 Hz). Exponential in volcano/biome progress:
+    # rate = min * (max/min)^(progress^exponent). Spread radius starts near the
+    # vent (~40) and opens to the arena edge. Caps prevent entity pile-up.
+    projectileRatePerSecondMin: 2
+    projectileRatePerSecondMax: 16
+    projectileRateExponent: 2.4
+    projectileMaxPerTick: 10
+    maxActiveVolcanoTnt: 28
+    projectileSpreadRadiusMin: 14
+    projectileSpreadRadiusStart: 40
+    # 0 = arena edge minus 5
+    projectileSpreadRadiusEnd: 0
+    projectileSpreadProgressExponent: 1.35
     # Tornados can start appearing this far into the match, then recur randomly
     fireTornadoStartMatchRatio: 0.35
     fireTornadoMaxActive: 2

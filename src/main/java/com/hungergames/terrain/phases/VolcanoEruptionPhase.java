@@ -10,6 +10,8 @@ import com.hungergames.powerup.PowerUpDefinition;
 import com.hungergames.terrain.ArcticMeltSurge;
 import com.hungergames.terrain.FireTornado;
 import com.hungergames.terrain.TerrainPhase;
+import com.hungergames.terrain.VolcanoBiomeFactions;
+import com.hungergames.terrain.VolcanoBiomeWar;
 import com.hungergames.terrain.VolcanoGuardian;
 import com.hungergames.terrain.VolcanoHeatUtil;
 import com.hungergames.terrain.VolcanoLavaFlow;
@@ -76,7 +78,9 @@ public class VolcanoEruptionPhase implements TerrainPhase {
             Material.CRIMSON_NYLIUM, Material.WARPED_NYLIUM,
             Material.SHROOMLIGHT, Material.WEEPING_VINES, Material.TWISTING_VINES,
             Material.CRIMSON_ROOTS, Material.WARPED_ROOTS, Material.NETHER_SPROUTS,
-            Material.SOUL_SAND, Material.SOUL_SOIL
+            Material.SOUL_SAND, Material.SOUL_SOIL,
+            Material.ICE, Material.PACKED_ICE, Material.BLUE_ICE,
+            Material.FROSTED_ICE, Material.SNOW_BLOCK, Material.SNOW, Material.POWDER_SNOW
     );
 
     private final HungerGamesPlugin plugin;
@@ -200,10 +204,17 @@ public class VolcanoEruptionPhase implements TerrainPhase {
             trySpawnProjectiles(world, config);
         }
 
-        if (intensity >= config.getDouble("mobSpawnMinIntensity", 0.25)) {
-            trySpawnMobs(world, arena, config, intensity);
+        if (VolcanoBiomeFactions.isEnabled(config)
+                && plugin.getTerrainPhaseManager().getBiomeFactions() != null
+                && plugin.getTerrainPhaseManager().allowsHostileSpawning(game)) {
+            plugin.getTerrainPhaseManager().getBiomeFactions()
+                    .tick(game, arena, world, config, plugin.getTerrainPhaseManager().getBiomeWar(), netherSpread);
+        } else {
+            if (intensity >= config.getDouble("mobSpawnMinIntensity", 0.25)) {
+                trySpawnMobs(world, arena, config, intensity);
+            }
+            trySpawnForestMobs(world, arena, config, intensity);
         }
-        trySpawnForestMobs(world, arena, config, intensity);
 
         trySpawnGhasts(world, arena, config, intensity);
 
@@ -230,6 +241,7 @@ public class VolcanoEruptionPhase implements TerrainPhase {
             volcanoGuardian.destroy();
             volcanoGuardian = null;
         }
+        arcticMeltSurge.reset();
         World world = arena.getWorld();
         if (world != null) {
             ArenaEntityUtil.clearVolcanoEntities(world, arena);
@@ -373,7 +385,14 @@ public class VolcanoEruptionPhase implements TerrainPhase {
         if (config.getInt("netherSpreadEnabled", 1) == 0) {
             return;
         }
-        netherSpread.tick(world, arena, game.getGameMode(), config, getNetherSpreadTargetRadius(arena, game, config));
+        VolcanoBiomeWar biomeWar = plugin.getTerrainPhaseManager().getBiomeWar();
+        if (biomeWar != null && VolcanoBiomeWar.isEnabled(config)) {
+            int protectedRadius = getVolcanoGrowthRadius(arena, game, config);
+            biomeWar.tickConversion(world, arena, game, config, netherSpread, protectedRadius);
+        } else {
+            netherSpread.tick(world, arena, game.getGameMode(), config,
+                    getNetherSpreadTargetRadius(arena, game, config));
+        }
         arcticMeltSurge.tick(plugin, game, arena, config, netherSpread.getConvertedRadius());
         piglinHorde.setNetherSpreadRadius(netherSpread.getConvertedRadius());
     }
@@ -736,6 +755,44 @@ public class VolcanoEruptionPhase implements TerrainPhase {
     }
 
     private void trySpawnProjectiles(World world, TerrainPhaseConfig config) {
+        double progress = getVolcanoProgress(config);
+
+        double rateMin = Math.max(0.0, config.getDouble("projectileRatePerSecondMin", 2.0));
+        double rateMax = Math.max(rateMin, config.getDouble("projectileRatePerSecondMax", 16.0));
+        double exponent = Math.max(0.5, config.getDouble("projectileRateExponent", 2.4));
+        double curved = Math.pow(progress, exponent);
+        double rate = rateMin <= 0.0
+                ? rateMax * curved
+                : rateMin * Math.pow(rateMax / Math.max(0.01, rateMin), curved);
+
+        int maxPerTick = Math.max(1, config.getInt("projectileMaxPerTick", 10));
+        int maxActive = Math.max(1, config.getInt("maxActiveVolcanoTnt", 28));
+        Arena tntArena = activeArena;
+        int activeTnt = tntArena == null ? 0 : ArenaEntityUtil.countVolcanoTnt(world, tntArena);
+        int room = Math.max(0, maxActive - activeTnt);
+        if (room <= 0) {
+            tntSpawnCredit = Math.min(tntSpawnCredit, 1.0);
+            return;
+        }
+
+        // TerrainPhase.onTick runs at 1 Hz (GameManager tick is 20L), so rate is TNT/sec.
+        tntSpawnCredit += rate;
+        int count = Math.min(maxPerTick, Math.min(room, (int) tntSpawnCredit));
+        if (count <= 0) {
+            return;
+        }
+        tntSpawnCredit -= count;
+        Location launch = getVentLaunchLocation(world);
+        for (int i = 0; i < count; i++) {
+            spawnProjectile(world, launch, config, progress);
+        }
+    }
+
+    /**
+     * Combines match time, cone height, and ice/volcano biome dominance so TNT
+     * and spread track the same progression as the erupting volcano.
+     */
+    private double getVolcanoProgress(TerrainPhaseConfig config) {
         double progress = getTntHeightProgress(config);
         if (activeGame != null) {
             double match = MatchPacing.getMatchProgress(activeGame, plugin.getPluginConfig());
@@ -743,22 +800,11 @@ public class VolcanoEruptionPhase implements TerrainPhase {
                 progress = Math.max(progress, match);
             }
         }
-
-        double rateMin = config.getDouble("projectileRatePerSecondMin", 8.0);
-        double rateMax = Math.max(rateMin, config.getDouble("projectileRatePerSecondMax", 22.0));
-        int maxPerTick = Math.max(1, config.getInt("projectileMaxPerTick", 8));
-        double rate = rateMin + (rateMax - rateMin) * progress;
-        tntSpawnCredit += rate / 20.0;
-
-        int count = Math.min(maxPerTick, (int) tntSpawnCredit);
-        if (count <= 0) {
-            return;
+        VolcanoBiomeWar biomeWar = plugin.getTerrainPhaseManager().getBiomeWar();
+        if (biomeWar != null) {
+            progress = Math.max(progress, biomeWar.getVolcanicDominance());
         }
-        tntSpawnCredit -= count;
-        Location launch = getVentLaunchLocation(world);
-        for (int i = 0; i < count; i++) {
-            spawnProjectile(world, launch, config);
-        }
+        return Math.min(1.0, Math.max(0.0, progress));
     }
 
     private Location getVentLaunchLocation(World world) {
@@ -773,10 +819,10 @@ public class VolcanoEruptionPhase implements TerrainPhase {
         );
     }
 
-    private void spawnProjectile(World world, Location launch, TerrainPhaseConfig config) {
-        Location target = pickTntTarget(world, config);
-        int fuse = fuseForFlight(launch, target, config);
-        Vector velocity = ballisticVelocity(launch, target, fuse);
+    private void spawnProjectile(World world, Location launch, TerrainPhaseConfig config, double progress) {
+        Location target = pickTntTarget(world, config, progress);
+        int fuse = fuseForFlight(launch, target, config, progress);
+        Vector velocity = ballisticVelocity(launch, target, fuse, config, progress);
 
         TNTPrimed primed = world.spawn(launch, TNTPrimed.class);
         primed.setFuseTicks(fuse);
@@ -784,17 +830,21 @@ public class VolcanoEruptionPhase implements TerrainPhase {
         ArenaEntityUtil.tagVolcanoTnt(plugin, primed);
     }
 
-    private Location pickTntTarget(World world, TerrainPhaseConfig config) {
-        double minR = 14;
-        double maxR = 48;
-        if (activeArena != null) {
-            int cone = 12;
-            if (activeGame != null) {
-                cone = Math.max(cone, getVolcanoGrowthRadius(activeArena, activeGame, config));
-            }
-            minR = Math.max(12, cone * 0.4 + 6);
-            maxR = Math.max(minR + 10, activeArena.getRadius() - 5);
+    private Location pickTntTarget(World world, TerrainPhaseConfig config, double progress) {
+        double minR = Math.max(8.0, config.getDouble("projectileSpreadRadiusMin", 14.0));
+        double startR = Math.max(minR, config.getDouble("projectileSpreadRadiusStart", 40.0));
+        double endR = config.getDouble("projectileSpreadRadiusEnd", 0.0);
+        if (endR <= 0 && activeArena != null) {
+            endR = Math.max(startR, activeArena.getRadius() - 5);
+        } else if (endR <= 0) {
+            endR = 48;
         }
+        double spreadExp = Math.max(0.4, config.getDouble("projectileSpreadProgressExponent", 1.35));
+        double spreadT = Math.pow(progress, spreadExp);
+        double maxR = startR + (endR - startR) * spreadT;
+        maxR = Math.max(minR + 8.0, maxR);
+
+        // Area-uniform in the annulus so shots are not clustered at the vent.
         double u = random.nextDouble();
         double dist = Math.sqrt(minR * minR + u * (maxR * maxR - minR * minR));
         double angle = random.nextDouble() * Math.PI * 2;
@@ -809,16 +859,19 @@ public class VolcanoEruptionPhase implements TerrainPhase {
         return new Location(world, x, gy + 1, z);
     }
 
-    private int fuseForFlight(Location from, Location to, TerrainPhaseConfig config) {
+    private int fuseForFlight(Location from, Location to, TerrainPhaseConfig config, double progress) {
         double horiz = Math.hypot(to.getX() - from.getX(), to.getZ() - from.getZ());
         int min = Math.max(20, config.getInt("tntFuseMinTicks", 35));
-        int max = Math.max(min, config.getInt("tntFuseMaxTicks", 80));
-        int travel = 22 + (int) Math.round(horiz * 0.55);
+        int maxStart = Math.max(min, config.getInt("tntFuseMaxTicks", 80));
+        int maxEnd = Math.max(maxStart, config.getInt("tntFuseMaxTicksEnd", 170));
+        int max = (int) Math.round(maxStart + (maxEnd - maxStart) * progress);
+        int travel = 18 + (int) Math.round(horiz / 2.35);
         int fuse = Math.max(min, Math.min(max, travel));
         return fuse + random.nextInt(8);
     }
 
-    private static Vector ballisticVelocity(Location from, Location to, int ticks) {
+    private static Vector ballisticVelocity(Location from, Location to, int ticks,
+                                            TerrainPhaseConfig config, double progress) {
         int t = Math.max(8, ticks);
         double oneMinusDt = 1.0 - Math.pow(TNT_DRAG, t);
         if (oneMinusDt < 1.0e-6) {
@@ -831,7 +884,9 @@ public class VolcanoEruptionPhase implements TerrainPhase {
         double gravityTerm = (TNT_GRAVITY / (1.0 - TNT_DRAG))
                 * (t - TNT_DRAG * oneMinusDt / (1.0 - TNT_DRAG));
         Vector velocity = new Vector(dx / sumDrag, (dy + gravityTerm) / sumDrag, dz / sumDrag);
-        double maxSpeed = 4.8;
+        double speedStart = Math.max(2.0, config.getDouble("tntMaxSpeedStart", 4.8));
+        double speedEnd = Math.max(speedStart, config.getDouble("tntMaxSpeedEnd", 8.4));
+        double maxSpeed = speedStart + (speedEnd - speedStart) * progress;
         double speed = velocity.length();
         if (speed > maxSpeed) {
             velocity.multiply(maxSpeed / speed);

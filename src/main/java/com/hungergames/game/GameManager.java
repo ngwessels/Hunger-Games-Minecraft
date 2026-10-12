@@ -624,17 +624,18 @@ public class GameManager {
         }
         World world = game.getArena().getWorld();
         ArenaEntityUtil.suppressVanillaMonsterSpawning(world);
-        ArenaEntityUtil.clearUntaggedHostiles(world, game.getArena());
+        ArenaEntityUtil.clearPeacefulStartHostiles(world, game.getArena());
         teleportToSpawns(game);
         plugin.getLootBoxManager().prepareMatchLoot(game);
         plugin.getSettlementManager().onGraceStart(game);
         plugin.getArcticManager().onGraceStart(game);
+        plugin.getTerrainPhaseManager().onMatchBegin(game);
         plugin.getVolcanoComet().start(game);
         plugin.getServer().getScheduler().runTask(plugin, () -> {
             if (game.getState() != GameState.GRACE && game.getState() != GameState.ACTIVE) {
                 return;
             }
-            ArenaEntityUtil.clearUntaggedHostiles(game.getArena().getWorld(), game.getArena());
+            ArenaEntityUtil.clearPeacefulStartHostiles(game.getArena().getWorld(), game.getArena());
             if (game.isSimulationMode()) {
                 spawnSimulationTestTarget(game);
             }
@@ -1168,6 +1169,7 @@ public class GameManager {
             ArenaEntityUtil.clearPhaseEntities(arena.getWorld(), arena);
         }
         plugin.getTerrainPhaseManager().reset(game);
+        plugin.getArcticManager().clear();
         plugin.getBlockMutationQueue().clear();
         plugin.getLootBoxManager().clearLootBoxes(game);
         plugin.getPowerUpManager().clear(game);
