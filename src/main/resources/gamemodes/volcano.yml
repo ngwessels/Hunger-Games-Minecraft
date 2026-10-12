@@ -1,7 +1,7 @@
 id: volcano
 displayName: "Volcano"
 difficulty: HARD
-description: "An ice world around a lava caldera. The volcano rises and fights the ice for 15–20 minutes until nothing frozen remains."
+description: "Patchy tundra around a lava caldera, ringed by ice ocean. The volcano thaws tundra to plains then nether over 15–20 minutes."
 minPlayers: 1
 maxPlayers: 24
 gracePeriodSeconds: 30
@@ -25,13 +25,17 @@ treePlacement:
     - oak
     - spruce
     - birch
-# Ice world: the whole disc except the caldera generates frozen. forestRadius
-# still drives spawn ring, settlements, and the outer glacier belt.
+# Cold layout: radius 0–forestRadius is patchy tundra (dry grass + snow patches).
+# Radius forestRadius–arenaRadius keeps the ice-ocean ring, glaciers, and bears.
+# forestRadius also drives spawn ring and settlements.
 arctic:
   enabled: true
-  iceWorldStart: true
   forestRadius: 300
   blendWidth: 12
+  # Noise frequency for snow/grass patches (higher = smaller patches).
+  tundraPatchScale: 0.045
+  # Fraction of tundra columns that are snowy (0–1).
+  tundraSnowRatio: 0.45
   polarBearCount: 8
   glacierCount: 6
   polarBearAggroRange: 28
@@ -148,8 +152,8 @@ terrainPhases:
     netherSpreadBudgetRadiusScale: 0.04
     netherSpreadScanDepth: 8
     netherSpreadScanHeightAbove: 40
-    # Ice vs volcano tug-of-war. Dominance follows match progress plus a decaying
-    # sine so ice recaptures ground mid-match and still loses by the end.
+    # Tundra -> plains -> nether tug-of-war. Dominance follows match progress plus
+    # a decaying sine so cold terrain recaptures ground mid-match and still loses.
     biomeWarEnabled: 1
     biomeWarProgressPower: 1.15
     biomeWarOscillationCycles: 3.0
@@ -157,7 +161,11 @@ terrainPhases:
     biomeWarOscillationDampening: 1.4
     biomeWarIceGoneMatchRatio: 0.92
     biomeWarIceRecaptureEnabled: 1
+    # Batched ensure-tundra pass at match start (also used for old templates).
     biomeWarFreezeColumnsPerTick: 400
+    # Plains band that leads the nether front (blocks beyond volcanic radius).
+    biomeWarPlainsLeadBlocks: 48
+    biomeWarPlainsColumnsPerTick: 64
     biomeWarRecaptureColumnsPerTick: 56
     arcticMeltLagBlocks: 10
     # 0 = auto (glacier toward caldera, stopping at the rim). Traveling wave, not a pulse.
@@ -193,7 +201,8 @@ terrainPhases:
     netherIslandMaxRadius: 8
     netherIslandMinThickness: 2
     netherIslandMaxThickness: 4
-    # Ice vs volcano mob armies. Caps lerp with volcanic dominance (ice dies out).
+    # Tundra/ice vs volcano mob armies. Caps lerp with volcanic dominance
+    # (cold faction dies out as tundra thaws).
     factionWarEnabled: 1
     iceFactionMaxMobsStart: 12
     iceFactionMaxMobsEnd: 0
@@ -214,7 +223,7 @@ terrainPhases:
       - WITHER_SKELETON
       - PIGLIN_BRUTE
       - HOGLIN
-    # Overworld hostiles (zombies, skeletons, spiders) in remaining forest
+    # Overworld hostiles (zombies, skeletons, spiders) in remaining tundra/plains
     # when factionWarEnabled is 0.
     maxForestMobs: 6
     forestMobSpawnChancePerTick: 0.04

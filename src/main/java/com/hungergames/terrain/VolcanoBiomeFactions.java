@@ -8,6 +8,7 @@ import com.hungergames.gamemode.TerrainPhaseConfig;
 import com.hungergames.util.ArenaEntityUtil;
 import com.hungergames.util.CircleUtil;
 import org.bukkit.Location;
+import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
@@ -25,8 +26,10 @@ import java.util.List;
 import java.util.Random;
 
 /**
- * Two opposing mob armies whose spawn caps and cadence follow ice vs volcano
- * dominance. Ice and volcano units hunt each other first, players second.
+ * Two opposing mob armies whose spawn caps and cadence follow cold/tundra vs
+ * volcano dominance. The "ice" roster lives on remaining tundra (and the ice
+ * ring); volcano units live on nether ground. They hunt each other first,
+ * players second.
  */
 public class VolcanoBiomeFactions {
 
@@ -95,7 +98,7 @@ public class VolcanoBiomeFactions {
         if (type == null) {
             return;
         }
-        Location spawn = findSpawn(world, arena, netherSpread, iceFaction);
+        Location spawn = findSpawn(world, arena, netherSpread, iceFaction, config);
         if (spawn == null) {
             return;
         }
@@ -137,11 +140,14 @@ public class VolcanoBiomeFactions {
     }
 
     private Location findSpawn(World world, Arena arena, VolcanoNetherSpread netherSpread,
-                               boolean iceFaction) {
+                               boolean iceFaction, TerrainPhaseConfig config) {
         double cx = arena.getCenterX();
         double cz = arena.getCenterZ();
+        // Ice/tundra faction prefers beyond the plains lead so it stays on cold ground.
+        int plainsLead = Math.max(0, config.getInt("biomeWarPlainsLeadBlocks", 48));
         int minR = iceFaction
-                ? Math.max(VolcanoCaldera.NO_TREE_RADIUS + 4, netherSpread.getConvertedRadius() + 2)
+                ? Math.max(VolcanoCaldera.NO_TREE_RADIUS + 4,
+                netherSpread.getConvertedRadius() + plainsLead + 2)
                 : VolcanoCaldera.NO_TREE_RADIUS;
         int maxR = iceFaction
                 ? arena.getRadius() - 4
@@ -153,7 +159,8 @@ public class VolcanoBiomeFactions {
             maxR = minR + 8;
         }
         int baseY = (int) arena.getCenterY();
-        for (int attempt = 0; attempt < 16; attempt++) {
+        Location fallback = null;
+        for (int attempt = 0; attempt < 20; attempt++) {
             double angle = random.nextDouble() * Math.PI * 2;
             double dist = minR + random.nextDouble() * Math.max(1, maxR - minR);
             int x = (int) (cx + Math.cos(angle) * dist);
@@ -167,13 +174,33 @@ public class VolcanoBiomeFactions {
             }
             int y = VolcanoHeatUtil.findTerrainGroundY(world, x, z, baseY);
             Block ground = world.getBlockAt(x, y, z);
-            Block above = world.getBlockAt(x, y + 1, z);
-            if (!ground.getType().isSolid() || ground.isLiquid() || !above.getType().isAir()) {
+            Material above = world.getBlockAt(x, y + 1, z).getType();
+            if (!ground.getType().isSolid() || ground.isLiquid()) {
                 continue;
             }
-            return new Location(world, x + 0.5, y + 1, z + 0.5);
+            if (!above.isAir() && above != Material.SNOW && above != Material.SHORT_GRASS
+                    && above != Material.FERN && above != Material.DEAD_BUSH) {
+                continue;
+            }
+            Location loc = new Location(world, x + 0.5, y + 1, z + 0.5);
+            if (!iceFaction || isColdFactionGround(ground.getType())) {
+                return loc;
+            }
+            if (fallback == null) {
+                fallback = loc;
+            }
         }
-        return null;
+        return fallback;
+    }
+
+    private static boolean isColdFactionGround(Material type) {
+        return type == Material.SNOW_BLOCK
+                || type == Material.GRASS_BLOCK
+                || type == Material.PODZOL
+                || type == Material.COARSE_DIRT
+                || type == Material.ICE
+                || type == Material.PACKED_ICE
+                || type == Material.BLUE_ICE;
     }
 
     private void prepareMob(LivingEntity entity, boolean iceFaction, EntityType type,

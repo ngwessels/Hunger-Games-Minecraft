@@ -187,7 +187,7 @@ public class GameMode {
         this.arenaRadius = Math.max(20, arenaRadius);
     }
 
-    /** Inner forest/volcano playable radius; equals arena radius when arctic is off. */
+    /** Inner tundra/forest playable radius; equals arena radius when arctic is off. */
     public int getForestRadius() {
         if (arctic != null && arctic.isEnabled()) {
             return Math.min(getArenaRadius(), Math.max(20, arctic.getForestRadius()));

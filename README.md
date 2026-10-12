@@ -105,9 +105,26 @@ Set an arena to volcano mode before generating:
 /hg arena generate <name>
 ```
 
-The arena center starts as a **lava caldera** (no center cornucopia). With `arctic.iceWorldStart: true` (the volcano default) the rest of the disc generates as ice, glaciers, and snow; `forestRadius` still places the spawn ring and settlements. Loot chests are scattered at match start on solid ground above the lava zone.
+The arena center starts as a **lava caldera** (no center cornucopia). With arctic enabled (volcano default):
 
-During the match, `VOLCANO_ERUPTION` builds the cone, converts ice to nether, launches TNT, and runs two mob factions. A decaying sine on match progress makes ice recapture ground (tug-of-war) until the last ~8% of the timer, when the volcano wins and no ice remains. Between games the arena is restored from the saved world copy.
+- **0–`forestRadius` (300):** patchy tundra — noise-driven mix of dry cold grass and snow patches (not ice sheets)
+- **`forestRadius`–arena edge (300–400):** ice-ocean ring with glaciers and polar bears
+
+`forestRadius` also places the spawn ring and settlements. Loot chests scatter at match start on solid ground above the lava zone.
+
+#### Arctic / tundra generation (`arctic:` keys)
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `enabled` | `true` | Cold layout on |
+| `forestRadius` | `300` | Tundra outer edge / ice-ring inner edge |
+| `blendWidth` | `12` | Soft blend into the ice ocean |
+| `tundraPatchScale` | `0.045` | Snow/grass patch noise frequency (higher = smaller patches) |
+| `tundraSnowRatio` | `0.45` | Fraction of tundra columns that are snowy (0–1) |
+
+`iceWorldStart` is ignored if present (whole-disc ice sheets were removed).
+
+During the match, `VOLCANO_ERUPTION` builds the cone and drives **tundra → plains → nether**, launches TNT, and runs two mob factions. A decaying sine on match progress lets cold terrain recapture ground (tug-of-war) until the last ~8% of the timer, when the volcano wins. Tsunamis still launch from the ice-ocean glaciers. Between games the arena is restored from the saved world copy.
 
 Hostile mobs (vanilla, spawners, plugin armies, faction units) stay off during grace and the opening `FOREST` phase. They start when the eruption/nether phase begins.
 
@@ -117,24 +134,26 @@ Use `initialTerrain: volcano` when creating custom modes that share this arena l
 
 | Key | Default | Meaning |
 |-----|---------|---------|
-| `biomeWarEnabled` | `1` | Ice/volcano tug-of-war |
+| `biomeWarEnabled` | `1` | Tundra/plains/nether tug-of-war |
 | `biomeWarProgressPower` | `1.15` | Curve of volcanic trend vs time (`1` = linear) |
-| `biomeWarOscillationCycles` | `3.0` | Ice comeback pulses over the match |
-| `biomeWarOscillationAmplitude` | `0.22` | How far ice can push the front back |
+| `biomeWarOscillationCycles` | `3.0` | Cold comeback pulses over the match |
+| `biomeWarOscillationAmplitude` | `0.22` | How far cold terrain can push the front back |
 | `biomeWarOscillationDampening` | `1.4` | Pulses fade as the match ends |
-| `biomeWarIceGoneMatchRatio` | `0.92` | After this match fraction, remaining ice is forced out |
-| `biomeWarIceRecaptureEnabled` | `1` | Convert nether back to ice when the front retreats |
-| `biomeWarFreezeColumnsPerTick` | `400` | Batched ice freeze (20 Hz, existing forest templates) |
-| `biomeWarRecaptureColumnsPerTick` | `56` | Batched ice recapture |
+| `biomeWarIceGoneMatchRatio` | `0.92` | After this match fraction, remaining cold terrain is forced out |
+| `biomeWarIceRecaptureEnabled` | `1` | Convert nether back toward plains/tundra when the front retreats |
+| `biomeWarFreezeColumnsPerTick` | `400` | Batched ensure-tundra pass (20 Hz, old templates) |
+| `biomeWarPlainsLeadBlocks` | `48` | Plains band ahead of the nether front |
+| `biomeWarPlainsColumnsPerTick` | `64` | Batched tundra→plains conversion |
+| `biomeWarRecaptureColumnsPerTick` | `56` | Batched cold recapture |
 
-#### Ice vs volcano factions
+#### Tundra/ice vs volcano factions
 
 | Key | Default | Meaning |
 |-----|---------|---------|
 | `factionWarEnabled` | `1` | Two armies that fight each other |
-| `iceFactionMaxMobsStart` / `End` | `12` / `0` | Ice cap vs volcanic dominance |
+| `iceFactionMaxMobsStart` / `End` | `12` / `0` | Cold/tundra cap vs volcanic dominance |
 | `volcanoFactionMaxMobsStart` / `End` | `3` / `14` | Volcano cap vs volcanic dominance |
-| `iceFactionMobs` | polar bear, stray, wolf | Ice roster |
+| `iceFactionMobs` | polar bear, stray, wolf | Cold roster (spawns on remaining tundra / ice ring) |
 | `volcanoFactionMobs` | blaze, magma cube, wither skeleton, piglin brute, hoglin | Volcano roster |
 | `factionAggroRange` | `28` | Rival search radius |
 
