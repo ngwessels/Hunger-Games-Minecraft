@@ -9,6 +9,7 @@ import com.hungergames.game.PlayerSession;
 import com.hungergames.gamemode.CometConfig;
 import com.hungergames.util.ArenaEntityUtil;
 import com.hungergames.util.ColorUtil;
+import com.hungergames.util.FastBlockMutator;
 import com.hungergames.util.ParticleUtil;
 import org.bukkit.Chunk;
 import org.bukkit.Color;
@@ -17,7 +18,7 @@ import org.bukkit.Material;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
 import org.bukkit.World;
-import org.bukkit.block.Block;
+import org.bukkit.block.data.BlockData;
 import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Display;
 import org.bukkit.entity.Player;
@@ -28,6 +29,7 @@ import org.joml.Quaternionf;
 import org.joml.Vector3f;
 
 import java.util.ArrayList;
+import java.util.BitSet;
 import java.util.List;
 
 /**
@@ -49,6 +51,13 @@ public class VolcanoComet {
             {0.15f, 0.55f, 0.3f}
     };
     private static final float[] CHUNK_SCALES = {1.0f, 0.45f, 0.4f, 0.38f, 0.35f, 0.3f};
+    private static final BlockData AIR = Material.AIR.createBlockData();
+    private static final BlockData LAVA = Material.LAVA.createBlockData();
+    private static final BlockData MAGMA = Material.MAGMA_BLOCK.createBlockData();
+    private static final BlockData NETHERRACK = Material.NETHERRACK.createBlockData();
+    private static final BlockData FIRE = Material.FIRE.createBlockData();
+    private static final int PRELOAD_SAMPLE_LIMIT = 400;
+    private static final int PRELOAD_CHUNK_LIMIT = 12;
 
     private enum Phase {
         APPROACH, DIVE, STRIKE, OBLITERATE
@@ -56,6 +65,7 @@ public class VolcanoComet {
 
     private final HungerGamesPlugin plugin;
     private final CometGravityAnomalies gravity = new CometGravityAnomalies();
+    private final FastBlockMutator mutator = new FastBlockMutator();
     private final List<BlockDisplay> pieces = new ArrayList<>();
     private BukkitTask task;
     private Game game;
@@ -75,6 +85,10 @@ public class VolcanoComet {
     private int soundTick;
     private double diveFromProgress;
     private Runnable onFinished;
+    private BitSet clearedColumns;
+    private int columnOriginX;
+    private int columnOriginZ;
+    private int columnStride;
 
     public VolcanoComet(HungerGamesPlugin plugin) {
         this.plugin = plugin;
@@ -112,6 +126,7 @@ public class VolcanoComet {
         this.shockIndex = 0;
         this.soundTick = 0;
         this.onFinished = null;
+        this.clearedColumns = null;
         this.currentScale = comet.getStartScale();
         gravity.reset();
 
@@ -196,6 +211,8 @@ public class VolcanoComet {
         config = null;
         phase = Phase.APPROACH;
         onFinished = null;
+        clearedColumns = null;
+        mutator.endTick();
     }
 
     private void tick() {
@@ -242,6 +259,7 @@ public class VolcanoComet {
                 phase = Phase.OBLITERATE;
                 shockRadius = 0;
                 shockIndex = 0;
+                prepareColumnTracker();
             }
         } else if (phase == Phase.OBLITERATE) {
             if (tickObliterate(world)) {
@@ -436,54 +454,132 @@ public class VolcanoComet {
         int used = 0;
         double cx = arena.getCenterX();
         double cz = arena.getCenterZ();
-        while (used < budget && shockRadius <= maxR) {
-            int points = Math.max(8, (int) Math.round(2 * Math.PI * Math.max(1, shockRadius)));
-            while (used < budget && shockIndex < points) {
-                double angle = (2 * Math.PI * shockIndex) / points;
-                int x = (int) Math.round(cx + Math.cos(angle) * shockRadius);
-                int z = (int) Math.round(cz + Math.sin(angle) * shockRadius);
-                blastColumn(world, x, z, shockRadius, maxR);
-                shockIndex++;
-                used++;
-            }
-            if (shockIndex >= points) {
-                if (shockRadius % 12 == 0) {
-                    Location ring = new Location(world, cx, config.getImpactHeight(), cz);
-                    world.playSound(ring, Sound.ENTITY_GENERIC_EXPLODE, 3.5f, 0.35f);
-                    ParticleUtil.spawnForced(world, Particle.EXPLOSION, cx, config.getImpactHeight(), cz,
-                            6, shockRadius * 0.15, 2, shockRadius * 0.15, 0.05);
+        mutator.beginTick(world);
+        try {
+            while (used < budget && shockRadius <= maxR) {
+                int points = ringPointCount(shockRadius);
+                while (used < budget && shockIndex < points) {
+                    int x = ringX(cx, shockRadius, shockIndex, points);
+                    int z = ringZ(cz, shockRadius, shockIndex, points);
+                    blastColumn(world, x, z, shockRadius, maxR);
+                    shockIndex++;
+                    used++;
                 }
-                shockRadius++;
-                shockIndex = 0;
+                if (shockIndex >= points) {
+                    if (shockRadius % 12 == 0) {
+                        Location ring = new Location(world, cx, config.getImpactHeight(), cz);
+                        world.playSound(ring, Sound.ENTITY_GENERIC_EXPLODE, 3.5f, 0.35f);
+                        ParticleUtil.spawnForced(world, Particle.EXPLOSION, cx, config.getImpactHeight(), cz,
+                                6, shockRadius * 0.15, 2, shockRadius * 0.15, 0.05);
+                    }
+                    shockRadius++;
+                    shockIndex = 0;
+                }
             }
+            if (shockRadius <= maxR) {
+                preloadUpcomingChunks(world, cx, cz, maxR);
+            }
+            return shockRadius > maxR;
+        } finally {
+            mutator.endTick();
         }
-        return shockRadius > maxR;
     }
 
     private void blastColumn(World world, int x, int z, int dist, int maxR) {
-        int highest = Math.min(world.getMaxHeight() - 2, world.getHighestBlockYAt(x, z) + 8);
+        Chunk chunk = mutator.chunkAt(x, z);
+        if (chunk == null) {
+            return;
+        }
         double norm = maxR <= 0 ? 1.0 : Math.min(1.0, dist / (double) maxR);
         int floor = 1 + (int) Math.round(7 * norm);
-        for (int y = floor; y <= Math.max(floor, highest); y++) {
-            Block block = world.getBlockAt(x, y, z);
-            Material type = block.getType();
-            if (type == Material.BEDROCK || type == Material.AIR) {
+        if (markColumn(x, z)) {
+            int highest = Math.min(world.getMaxHeight() - 2, mutator.highestBlockY(x, z) + 8);
+            int top = Math.max(floor, highest);
+            for (int y = floor; y <= top; y++) {
+                if (mutator.isSkippable(chunk, x, y, z)) {
+                    continue;
+                }
+                mutator.set(chunk, x, y, z, AIR);
+            }
+        }
+        BlockData bed = norm < 0.22 ? LAVA : (norm < 0.55 ? MAGMA : NETHERRACK);
+        mutator.set(chunk, x, Math.max(1, floor - 1), z, bed);
+        if (norm < 0.35 && (x + z) % 5 == 0 && mutator.isAir(chunk, x, floor, z)) {
+            mutator.set(chunk, x, floor, z, FIRE);
+        }
+    }
+
+    private void prepareColumnTracker() {
+        int maxR = arena.getRadius() + 2;
+        columnOriginX = (int) Math.floor(arena.getCenterX()) - maxR - 2;
+        columnOriginZ = (int) Math.floor(arena.getCenterZ()) - maxR - 2;
+        columnStride = maxR * 2 + 8;
+        clearedColumns = new BitSet(columnStride * columnStride);
+    }
+
+    /**
+     * @return true when this column has not been stripped yet (the expensive Y
+     *         scan should run). Floor/fire are still applied on repeats so a
+     *         later ring sample can overwrite the crust exactly as before.
+     */
+    private boolean markColumn(int x, int z) {
+        if (clearedColumns == null || columnStride <= 0) {
+            return true;
+        }
+        int ox = x - columnOriginX;
+        int oz = z - columnOriginZ;
+        if (ox < 0 || oz < 0 || ox >= columnStride || oz >= columnStride) {
+            return true;
+        }
+        int index = ox * columnStride + oz;
+        if (clearedColumns.get(index)) {
+            return false;
+        }
+        clearedColumns.set(index);
+        return true;
+    }
+
+    private void preloadUpcomingChunks(World world, double cx, double cz, int maxR) {
+        int r = shockRadius;
+        int idx = shockIndex;
+        int inspected = 0;
+        int loaded = 0;
+        int lastCx = Integer.MIN_VALUE;
+        int lastCz = Integer.MIN_VALUE;
+        while (inspected < PRELOAD_SAMPLE_LIMIT && loaded < PRELOAD_CHUNK_LIMIT && r <= maxR) {
+            int points = ringPointCount(r);
+            if (idx >= points) {
+                r++;
+                idx = 0;
                 continue;
             }
-            block.setType(Material.AIR, false);
-        }
-        Material bed = norm < 0.22 ? Material.LAVA
-                : (norm < 0.55 ? Material.MAGMA_BLOCK : Material.NETHERRACK);
-        Block floorBlock = world.getBlockAt(x, Math.max(1, floor - 1), z);
-        if (floorBlock.getType() != Material.BEDROCK) {
-            floorBlock.setType(bed, false);
-        }
-        if (norm < 0.35 && (x + z) % 5 == 0) {
-            Block fire = world.getBlockAt(x, floor, z);
-            if (fire.getType().isAir()) {
-                fire.setType(Material.FIRE, false);
+            int x = ringX(cx, r, idx, points);
+            int z = ringZ(cz, r, idx, points);
+            int chunkX = x >> 4;
+            int chunkZ = z >> 4;
+            if (chunkX != lastCx || chunkZ != lastCz) {
+                lastCx = chunkX;
+                lastCz = chunkZ;
+                if (!world.isChunkLoaded(chunkX, chunkZ)) {
+                    world.getChunkAt(chunkX, chunkZ);
+                    loaded++;
+                }
             }
+            idx++;
+            inspected++;
         }
+    }
+
+    private static int ringPointCount(int radius) {
+        return Math.max(8, (int) Math.round(2 * Math.PI * Math.max(1, radius)));
+    }
+
+    private static int ringX(double cx, int radius, int index, int points) {
+        return (int) Math.round(cx + Math.cos((2 * Math.PI * index) / points) * radius);
+    }
+
+    private static int ringZ(double cz, int radius, int index, int points) {
+        return (int) Math.round(cz + Math.sin((2 * Math.PI * index) / points) * radius);
     }
 
     private void forceChunk(Location location) {
